@@ -52,6 +52,9 @@ function displayRepoSize(owner, name) {
   return stored.bytes;
 }
 
+// The sum of the stored numbers, no walks. A repository whose stored size is
+// missing or older than the TTL is counted at what it was last known to be, so
+// a page render never blocks on a walk of every repository an account owns.
 function displayAccountSize(owner) {
   const rows = accounts.listRepos(owner);
   let total = 0;
@@ -61,30 +64,29 @@ function displayAccountSize(owner) {
   return total;
 }
 
-function exactAccountSize(owner) {
-  let total = 0;
-  for (const record of accounts.listRepos(owner)) {
-    total += exactRepoSize(record.owner, record.name);
-  }
-  return total;
-}
-
 function formatLimit(bytes) {
   return `${Math.round(bytes / 1048576)}MB`;
 }
 
 // Returns null when there is room, otherwise the reason there is not. Both the
-// single repository ceiling and the account total are checked, and the account
-// total is the sum over every repository it owns.
-function checkBudget(owner, name, extraBytes) {
+// single repository ceiling and the account total are checked.
+//
+// The account total comes from the catalog's stored sizes, not from walking
+// every repository on the account. A caller that already measured this
+// repository passes that number as measuredRepoBytes, which is what stops an
+// import from walking a freshly-cloned tree three times on the main thread.
+function checkBudget(owner, name, extraBytes, measuredRepoBytes) {
   const dir = repoDir(owner, name);
-  const repoBytes = repoSize(dir) + extraBytes;
+  const repoBytes = (measuredRepoBytes === undefined ? repoSize(dir) : measuredRepoBytes) + extraBytes;
   if (repoBytes > MAX_REPO_BYTES) {
     return `${name} would reach ${formatLimit(repoBytes)}, past the ${formatLimit(MAX_REPO_BYTES)} per-repository limit`;
   }
-  const others = exactAccountSize(owner);
-  const current = accounts.getRepo(owner, name) ? repoSize(dir) : 0;
-  const accountBytes = others - current + repoBytes;
+  const stored = catalog.storedSize(owner, name);
+  const total = catalog.storedAccountTotal(owner);
+  // The stored total already counts this repository at its old size, which for a
+  // repository being imported for the first time is zero.
+  const wasAt = stored ? stored.bytes : 0;
+  const accountBytes = total - wasAt + repoBytes;
   if (accountBytes > MAX_ACCOUNT_BYTES) {
     return `${owner} would reach ${formatLimit(accountBytes)} across all repositories, past the ${formatLimit(MAX_ACCOUNT_BYTES)} per-account limit`;
   }
@@ -178,7 +180,6 @@ module.exports = {
   exactRepoSize,
   displayRepoSize,
   displayAccountSize,
-  exactAccountSize,
   checkBudget,
   ensureRepoDir,
   createRepository,

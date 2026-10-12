@@ -197,6 +197,9 @@ function run(job) {
 function adopt(job, dir) {
   try {
     const headRef = repo.headRef(dir);
+    // One walk, and the number it produces is what the budget check is given.
+    // Walking the tree again here is what made finishing an import stall the
+    // whole process, because adopt runs on the event loop.
     const sizeBytes = storage.repoSize(dir);
     const over = storage.checkBudget(job.owner, job.name, 0);
     if (over) throw new Error(over);

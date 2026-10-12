@@ -422,6 +422,8 @@ function updateRef(dir, ref, sha) {
   const file = path.join(dir, ref);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, `${sha}\n`);
+  forgetTrees(dir);
+  forgetLastCommits(dir);
 }
 
 // A reflog entry per update, in git's own on-disk format at logs/<ref>:
@@ -760,7 +762,15 @@ function history(dir, tipSha, limit, maxCommits = MAX_HISTORY_READ) {
 // root commit, which has no parent, and any commit still unexplained when the
 // bound cuts the walk short. Those entries are left out and the view renders
 // them as unrecorded rather than pointing at the wrong commit.
-const LAST_COMMIT_BOUND = 20000;
+//
+// Each commit costs two full tree reads, so the bound is what stands between a
+// page render and an unresponsive process. At 20000 it was 40000 synchronous
+// inflate calls on one request, which on a repository of a few megabytes is
+// enough to stall every other request on the instance. The loop below stops as
+// soon as the directory is fully explained, so this only costs anything on a
+// history that touches the directory rarely, and it is the ceiling for that case
+// rather than the expected cost.
+const LAST_COMMIT_BOUND = 400;
 
 function lastCommitsForTree(dir, tipSha, prefixParts) {
   const cacheKey = `${dir}\0${prefixParts.join('/')}\0${tipSha}`;
@@ -774,7 +784,7 @@ function lastCommitsForTree(dir, tipSha, prefixParts) {
   // the wrong commit here would make wanted describe a different directory, and
   // an empty one ends the walk before it starts.
   const tipCommit = commits.find((commit) => commit.sha === tipSha) || commits[0];
-  const wanted = new Set(snapshotTree(dir, tipCommit ? tipCommit.tree : null, prefixParts).keys());
+  const wanted = new Set(cachedSnapshotTree(dir, tipCommit ? tipCommit.tree : null, prefixParts).keys());
   const found = new Map();
 
   // Each commit is compared against its own first parent and credited with what
@@ -785,12 +795,12 @@ function lastCommitsForTree(dir, tipSha, prefixParts) {
     commit.parents.length ? treeOfCommit(dir, commit.parents[0]) : null;
 
   for (const commit of commits) {
-    const snapshot = snapshotTree(dir, commit.tree, prefixParts);
+    const snapshot = cachedSnapshotTree(dir, commit.tree, prefixParts);
     const parentTree = firstParentTree(commit);
     // The root commit has no parent to compare against. Whatever it created and
     // nothing touched afterwards is handled by the oldest-commit pass below.
     if (parentTree !== null) {
-      const before = snapshotTree(dir, parentTree, prefixParts);
+      const before = cachedSnapshotTree(dir, parentTree, prefixParts);
       for (const [name, sha] of snapshot) {
         if (before.get(name) !== sha && !found.has(name)) {
           found.set(name, { sha: commit.sha, subject: commit.subject });
@@ -822,7 +832,7 @@ function lastCommitsForTree(dir, tipSha, prefixParts) {
     }
   }
 
-  if (lastCommitCache.size >= 64) {
+  if (lastCommitCache.size >= LAST_COMMIT_CACHE) {
     lastCommitCache.delete(lastCommitCache.keys().next().value);
   }
   lastCommitCache.set(cacheKey, found);
@@ -833,6 +843,45 @@ function treeOfCommit(dir, commitSha) {
   const obj = readObject(dir, commitSha);
   if (!obj || obj.type !== 'commit') return null;
   return parseCommit(obj.body).tree;
+}
+
+// One entry per directory per ref, so a repository big enough to walk is not
+// evicted by browsing its own subdirectories. Each entry holds a Map of the
+// file names in one directory, which is what keeps this small enough to hold on
+// to rather than recomputing the walk on every click.
+const LAST_COMMIT_CACHE = 512;
+
+// Trees are read many times per page and inflate every time, so the ones behind
+// the last-commit walk are held here. A commit that did not touch the directory
+// has the same tree as its parent, which is the common case, so the cache hits
+// far more often than a sha count would suggest.
+const TREE_CACHE_MAX = 2000;
+
+const treeCache = new Map();
+
+function cachedSnapshotTree(dir, treeSha, parts) {
+  if (!treeSha) return new Map();
+  const cacheKey = `${dir}\0${parts.join('/')}\0${treeSha}`;
+  const hit = treeCache.get(cacheKey);
+  if (hit) return hit;
+  const entries = snapshotTree(dir, treeSha, parts);
+  if (treeCache.size >= TREE_CACHE_MAX) treeCache.delete(treeCache.keys().next().value);
+  treeCache.set(cacheKey, entries);
+  return entries;
+}
+
+// Dropped when a repository is written to, because a push moves its trees and
+// a stale snapshot would credit a commit with nothing.
+function forgetTrees(dir) {
+  for (const key of treeCache.keys()) {
+    if (key.startsWith(`${dir}\0`)) treeCache.delete(key);
+  }
+}
+
+function forgetLastCommits(dir) {
+  for (const key of lastCommitCache.keys()) {
+    if (key.startsWith(`${dir}\0`)) lastCommitCache.delete(key);
+  }
 }
 
 const lastCommitCache = new Map();

@@ -184,25 +184,15 @@ function refreshSizeInBackground(owner, name, measure) {
   });
 }
 
-function accountTotalBytes(owner, sizeOf) {
-  const rows = connect()
-    .prepare('SELECT name, size_bytes, size_checked_at FROM repository WHERE owner = ?')
-    .all(owner.toLowerCase());
-  let total = 0;
-  for (const row of rows) {
-    if (Date.now() - row.size_checked_at > SIZE_TTL_MS) {
-      try {
-        storeSize(row.owner || owner.toLowerCase(), row.name, sizeOf(row.name));
-      } catch {
-        // Keep the stale number rather than losing the total.
-      }
-    }
-    const fresh = connect()
-      .prepare('SELECT size_bytes FROM repository WHERE owner = ? AND name = ?')
-      .get(owner.toLowerCase(), row.name);
-    total += fresh ? fresh.size_bytes : row.size_bytes;
-  }
-  return total;
+// The sum of what is stored, with no directory walk and no refresh. A stale
+// entry is counted at its last known size, which is the right trade for a
+// budget check: the answer is a moment old rather than the caller blocking the
+// event loop on a filesystem walk.
+function storedAccountTotal(owner) {
+  const row = connect()
+    .prepare('SELECT SUM(size_bytes) AS total FROM repository WHERE owner = ?')
+    .get(owner.toLowerCase());
+  return row && row.total ? row.total : 0;
 }
 
 // Runs once at boot. Skipped when no account file has changed since the last
@@ -264,7 +254,7 @@ module.exports = {
   storedSize,
   storeSize,
   refreshSizeInBackground,
-  accountTotalBytes,
+  storedAccountTotal,
   rebuildIfStale,
   fingerprint,
   usage,
