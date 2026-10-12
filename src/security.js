@@ -126,7 +126,12 @@ const CSP = [
   "default-src 'self'",
   "script-src 'self'",
   "style-src 'self'",
-  "img-src 'self' data:",
+  // Any https host is allowed for images, because a README on github.com points
+  // at github.com/user-attachments and at badge services, and there is no way to
+  // tell those apart from anything else. The cost is that opening a repository
+  // tells the image hosts it was opened, which is the same trade github makes.
+  // Images cannot script, so the script-src above still holds the line.
+  "img-src 'self' data: https:",
   "connect-src 'self'",
   "form-action 'self'",
   "frame-ancestors 'none'",

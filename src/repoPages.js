@@ -17,7 +17,13 @@ const {
 const objects = require('./git/objects');
 const repo = require('./git/repo');
 const diff = require('./git/diff');
+const readme = require('./readme');
 const { MAX_REPO_BYTES, MAX_ACCOUNT_BYTES } = require('./config');
+
+// Past this the README is shown as a link instead of rendered. A render walks
+// every line and a repository can hold a file of any size, so the ceiling is
+// what keeps a page render from becoming an afternoon.
+const README_RENDER_BYTES = 512 * 1024;
 
 const RAW_PREVIEW_BYTES = 512 * 1024;
 
@@ -76,7 +82,53 @@ function withSidebar({ record, viewer, active, ref, branches, tags, sizeBytes, a
 </div>`;
 }
 
-function codePage({ repo: record, viewer, ref, pathSegments, entries, lastCommits, readmeNames, branches, tags, sizeBytes, accountBytes, cloneUrl, user }) {
+// A README image is written relative to the file it sits in, so the path in the
+// markdown is resolved against the directory the README lives in and pointed at
+// the blob that serves it. An absolute URL is left alone and the browser fetches
+// it from wherever it lives.
+function readmeResolver(base, ref, pathSegments) {
+  return (target) => {
+    const segments = target.split('/').filter(Boolean);
+    const walked = [];
+    for (const segment of segments) {
+      if (segment === '.') continue;
+      if (segment === '..') {
+        walked.pop();
+        continue;
+      }
+      walked.push(segment);
+    }
+    return `/${base}${hrefPath([ref, ...pathSegments, ...walked])}`;
+  };
+}
+
+// A README that is not markdown is shown as a link rather than run through the
+// renderer, since a plain README.txt is text and this is a markdown viewer.
+function readmeBlock({ record, resolvedRef, pathSegments, readmeFile, readmeBody }) {
+  const base = baseHref(record);
+  const link = `${base}/blob/${hrefPath([resolvedRef, ...pathSegments, readmeFile])}`;
+
+  if (!/\.mdx?$/i.test(readmeFile)) {
+    return `<div class="readme"><a href="${link}">${esc(readmeFile)}</a></div>`;
+  }
+
+  const body = readmeBody;
+  if (!body || body.length === 0) return '';
+  if (body.length > README_RENDER_BYTES) {
+    return `<div class="readme"><p class="muted small">README is ${esc(formatBytes(body.length))}, past the ${esc(
+      formatBytes(README_RENDER_BYTES)
+    )} render limit.</p><p><a href="${link}">Read ${esc(readmeFile)}</a></p></div>`;
+  }
+  if (objects.isBinary(body)) return '';
+
+  const html = readme.render(body.toString('utf8'), { resolvePath: readmeResolver(base, resolvedRef, pathSegments) });
+  return `<article class="readme readme-body">
+  <div class="readme-head">${esc(readmeFile)}</div>
+  ${html}
+</article>`;
+}
+
+function codePage({ repo: record, viewer, ref, pathSegments, entries, lastCommits, readmeNames, readmeBody, branches, tags, sizeBytes, accountBytes, cloneUrl, user }) {
   const base = baseHref(record);
   const resolvedRef = ref || 'HEAD';
   const rows = entries.map((entry) => {
@@ -88,9 +140,9 @@ function codePage({ repo: record, viewer, ref, pathSegments, entries, lastCommit
     ? `<a class="up" href="${base}/tree/${hrefPath([resolvedRef, ...parentSegments])}">..</a>`
     : '';
 
-  const readme = readmeName(readmeNames);
-  const readmeLine = readme
-    ? `<div class="readme"><a href="${base}/blob/${hrefPath([resolvedRef, ...pathSegments, readme])}">${esc(readme)}</a></div>`
+  const readmeFile = readmeName(readmeNames);
+  const readmeLine = readmeFile
+    ? readmeBlock({ record, resolvedRef, pathSegments, readmeFile, readmeBody })
     : '';
 
   const main = `${branchPicker({ branches, current: currentBranchName(branches, resolvedRef), base })}
@@ -500,4 +552,6 @@ module.exports = {
   tagsPage,
   settingsPage,
   changedFiles,
+  readmeName,
+  README_RENDER_BYTES,
 };

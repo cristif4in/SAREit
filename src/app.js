@@ -12,6 +12,7 @@ const security = require('./security');
 const log = require('./log');
 const catalog = require('./catalog');
 const repo = require('./git/repo');
+const debug = require('./debug');
 const { PUBLIC_DIR, MAX_FORM_BYTES, MAX_PUSH_BYTES, REPOS_DIR, ACCOUNTS_DIR, HOST } = require('./config');
 
 const STATIC_TYPES = {
@@ -140,6 +141,7 @@ function isStateChange(req, segments) {
 function createApp() {
   return async function app(req, res) {
     security.applySecurityHeaders(res);
+    measureResponse(req, res);
 
     let url;
     let segments;
@@ -226,6 +228,50 @@ function isGitPath(segments) {
   if (segments.length < 3) return false;
   const hook = segments[2];
   return hook === 'git-upload-pack' || hook === 'git-receive-pack' || (hook === 'info' && segments[3] === 'refs');
+}
+
+// Times the request from the first byte of the response to the last, and counts
+// the bytes on the way out. The clock starts here rather than after the body is
+// read so a large git push shows what the client actually waited for.
+//
+// end and write are wrapped because a response can finish through either and a
+// HEAD or a 304 writes nothing, which would otherwise be counted as a zero byte
+// response rather than as no body at all.
+//
+// settled guards the counter. A handler that ends a response and then throws
+// reaches the catch in createApp, which ends it a second time, and without the
+// guard that one request would decrement inflight twice and leave it climbing
+// for the life of the process. A client that walks away mid-transfer never
+// calls end at all, so close decrements it instead.
+function measureResponse(req, res) {
+  const startedAt = debug.started();
+  let bytes = 0;
+  let settled = false;
+
+  const settle = () => {
+    if (settled) return;
+    settled = true;
+    debug.finished(startedAt, bytes);
+  };
+
+  const write = res.write.bind(res);
+  const end = res.end.bind(res);
+
+  res.write = (chunk, ...rest) => {
+    bytes += byteLength(chunk);
+    return write(chunk, ...rest);
+  };
+  res.end = (chunk, ...rest) => {
+    bytes += byteLength(chunk);
+    settle();
+    return end(chunk, ...rest);
+  };
+  res.on('close', settle);
+}
+
+function byteLength(chunk) {
+  if (chunk === undefined || chunk === null) return 0;
+  return typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length;
 }
 
 module.exports = { createApp, reportStartupState };

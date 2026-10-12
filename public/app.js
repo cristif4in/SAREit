@@ -99,7 +99,95 @@
 
     var importer = document.querySelector('[data-import-status]');
     if (importer) followImport(importer);
+
+    // The choice survives a navigation, because a host switching the overlay on
+    // and then clicking through the site to look at it should not have to run
+    // the command again on every page. Scope is the tab, not the browser.
+    if (sessionDebug() === 'on') window.debugenable();
   });
+
+  // Live counters for the host. Off until debugenable is run in the console,
+  // which is a real function on window rather than a script the page writes into
+  // itself: the Content-Security-Policy forbids inline script, and a snippet
+  // that rewrites the document to install itself is not something a git host
+  // should hand to anyone who loads a page.
+  var DEBUG_KEY = 'sareit-debug';
+  var debugTimer = null;
+  var debugBaseline = 0;
+
+  function sessionDebug() {
+    try {
+      return window.sessionStorage.getItem(DEBUG_KEY);
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function rememberDebug(value) {
+    try {
+      window.sessionStorage.setItem(DEBUG_KEY, value);
+    } catch (err) {
+      // Storage unavailable: the overlay still works, it just resets on reload.
+    }
+  }
+
+  function formatBytes(bytes) {
+    if (bytes < 1024) return bytes + 'B';
+    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + 'KB';
+    if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + 'MB';
+    return (bytes / 1073741824).toFixed(2) + 'GB';
+  }
+
+  function paint(state) {
+    document.getElementById('t').textContent = state.lastMs + 'ms';
+    document.getElementById('c').textContent = String(state.inflight);
+    // The server counts from boot. What the overlay shows is what happened after
+    // it was switched on, so the total is measured first and subtracted.
+    document.getElementById('d').textContent = formatBytes(Math.max(0, state.bytes - debugBaseline));
+  }
+
+  function poll() {
+    window.fetch('/_debug/state', { credentials: 'same-origin' })
+      .then(function (answer) {
+        return answer.ok ? answer.json() : null;
+      })
+      .then(function (state) {
+        if (state) paint(state);
+      })
+      .catch(function () {
+        // A failed poll leaves the last numbers up rather than blanking them: a
+        // stale reading is still more use than none.
+      });
+  }
+
+  window.debugenable = function () {
+    var panel = document.getElementById('Debug');
+    if (!panel) return 'no overlay on this page';
+    rememberDebug('on');
+    window.clearInterval(debugTimer);
+    debugTimer = window.setInterval(poll, 500);
+    window
+      .fetch('/_debug/state', { credentials: 'same-origin' })
+      .then(function (answer) {
+        return answer.ok ? answer.json() : null;
+      })
+      .then(function (state) {
+        if (!state) return;
+        debugBaseline = state.bytes;
+        panel.hidden = false;
+        paint(state);
+      });
+    return 'debug on: last response time, requests in flight, bytes served';
+  };
+
+  window.debugdisable = function () {
+    rememberDebug('off');
+    window.clearInterval(debugTimer);
+    debugTimer = null;
+    var panel = document.getElementById('Debug');
+    if (panel) panel.hidden = true;
+    return 'debug off';
+  };
 
   // The import page follows the copy the server is running. The number on the
   // bar is git's own, read back out of the job, so there is nothing here to

@@ -1,5 +1,4 @@
-// SAREit HTML for every page. GitHub shaped: dark masthead, repository header
-// with tabs, a file table, and an About sidebar.
+// SAREit HTML for every page.
 
 const { MAX_REPO_BYTES, MAX_ACCOUNT_BYTES, HIGHLIGHTED_LOGINS } = require('./config');
 
@@ -9,8 +8,6 @@ function esc(value) {
   return String(value ?? '').replace(/[&<>"']/g, (char) => ESCAPES[char]);
 }
 
-// Path segments keep their slashes readable in links; a ref with a slash in it
-// is resolved by longest match in the router, same as github does.
 function hrefPath(parts) {
   return parts.map((part) => encodeURIComponent(part)).join('/');
 }
@@ -77,6 +74,11 @@ ${banner}
 ${body}
 </main>
 <footer class="colophon"><a href="https://gta.deloskiyt.pl/" rel="noopener noreferrer" target="_blank">https://gta.deloskiyt.pl/</a></footer>
+<div id="Debug" hidden aria-hidden="true">
+  <div class="debug-row">Response <span id="t">0ms</span></div>
+  <div class="debug-row">In flight <span id="c">0</span></div>
+  <div class="debug-row">Data <span id="d">0B</span></div>
+</div>
 </body>
 </html>`;
 }

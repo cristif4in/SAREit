@@ -762,6 +762,160 @@ select:focus {
   font-size: 13px;
 }
 
+/* The rendered README. Images are capped rather than allowed to run full
+   width, so a screenshot 4000px across does not push the table off the page. */
+.readme-body {
+  border-top: 1px solid var(--border);
+  padding: 20px 16px 24px;
+  line-height: 1.6;
+  overflow-wrap: break-word;
+}
+
+.readme-head {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 12px;
+}
+
+.readme-body > *:first-child {
+  margin-top: 0;
+}
+
+.readme-body h1,
+.readme-body h2 {
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.readme-body h1 {
+  font-size: 24px;
+}
+
+.readme-body h2 {
+  font-size: 19px;
+}
+
+.readme-body h3 {
+  font-size: 16px;
+}
+
+.readme-body h4,
+.readme-body h5,
+.readme-body h6 {
+  font-size: 14px;
+  color: var(--fg-soft);
+}
+
+.readme-body img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+  background: var(--subtle);
+}
+
+.readme-body pre {
+  background: var(--subtle);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.readme-body pre[data-lang]::before {
+  content: attr(data-lang);
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 8px;
+}
+
+.readme-body code {
+  background: var(--subtle);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 12px;
+}
+
+.readme-body pre code {
+  background: none;
+  padding: 0;
+}
+
+.readme-body blockquote {
+  margin: 12px 0;
+  padding: 2px 14px;
+  border-left: 3px solid var(--border);
+  color: var(--fg-soft);
+}
+
+.readme-body .readme-list {
+  padding-left: 22px;
+  margin: 10px 0;
+}
+
+.readme-body .readme-list input[type='checkbox'] {
+  margin-right: 6px;
+}
+
+.readme-body hr {
+  border: 0;
+  border-top: 1px solid var(--border-soft);
+  margin: 20px 0;
+}
+
+.readme-table {
+  border-collapse: collapse;
+  margin: 12px 0;
+  display: block;
+  overflow-x: auto;
+}
+
+.readme-table th,
+.readme-table td {
+  border: 1px solid var(--border);
+  padding: 6px 11px;
+}
+
+.readme-table th {
+  background: var(--subtle);
+}
+
+/* The debug overlay, hidden until debugenable is run in the console. It sits
+   over the masthead, so it takes no pointer events: otherwise it would swallow
+   clicks meant for whatever is under it. */
+#Debug {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  z-index: 40;
+  opacity: 0.5;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--muted);
+  text-align: right;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  pointer-events: none;
+  user-select: none;
+}
+
+#Debug[hidden] {
+  display: none;
+}
+
+.debug-row {
+  margin-bottom: 4px;
+}
+
+.debug-row span {
+  color: var(--fg);
+}
+
 .code-table td,
 .diff-table td {
   border-bottom: 1px solid var(--border-soft);

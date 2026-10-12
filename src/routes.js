@@ -9,6 +9,7 @@ const storage = require('./storage');
 const auth = require('./auth');
 const security = require('./security');
 const imports = require('./imports');
+const debug = require('./debug');
 const log = require('./log');
 const repo = require('./git/repo');
 const objects = require('./git/objects');
@@ -93,9 +94,7 @@ function repoContext(req, record) {
   };
 }
 
-// The label a page shows for HEAD. It is the branch the repository actually
-// resolves HEAD to, which is not always the first one alphabetically and not
-// always main.
+
 function headLabel(context) {
   return context.defaultBranch;
 }
@@ -132,10 +131,7 @@ async function handleWeb(req, res, segments, url) {
   if (head === 'register' && segments.length === 1) return authRoute(req, res, 'register');
   if (head === 'logout' && segments.length === 1) return logout(req, res);
   if (head === 'new' && segments.length === 1) return newRepoRoute(req, res, viewer);
-  // The import job's own page and status. A three segment path is claimed even
-  // when no job matches, which costs an account named "new" with a repository
-  // named "import" a ref that is exactly 32 hex characters; four segment paths
-  // with a section other than status fall through to the routing below.
+  if (head === '_debug' && segments.length === 2 && segments[1] === 'state') return debugStateRoute(req, res, viewer);
   if (head === 'new' && segments[1] === 'import' && (segments.length === 3 || segments[3] === 'status')) {
     return importJobRoute(req, res, viewer, segments);
   }
@@ -175,9 +171,7 @@ async function handleWeb(req, res, segments, url) {
   return undefined;
 }
 
-// Discovery reads the catalog, a derived index, instead of opening every
-// account file. The dashboard and search cost the same whether there are ten
-// accounts or ten thousand.
+
 function dashboard(res, viewer, query) {
   const search = query.get('q') || '';
   const repos = catalog.search(search, viewer);
@@ -185,9 +179,7 @@ function dashboard(res, viewer, query) {
 }
 
 function profileRoute(req, res, owner, viewer, query) {
-  // Anything that cannot be an account name, a browser's automatic requests
-  // like /favicon.ico among them, is a miss rather than a lookup. Without
-  // this they reach the account store and come back as an internal error.
+
   if (!storage.validLogin(owner)) {
     plain(res, 404, 'Not found\n');
     return;
@@ -311,6 +303,23 @@ function logout(req, res) {
   return undefined;
 }
 
+function debugStateRoute(req, res, viewer) {
+  // GET only. A read of the counters is not a state change, so nothing upstream
+  // filters it on method, and routing on the method is what stops it being
+  // posted to.
+  if (req.method !== 'GET') {
+    res.writeHead(405, { Allow: 'GET', 'Content-Length': 0 });
+    res.end();
+    return undefined;
+  }
+  if (!viewer) {
+    plain(res, 404, 'Not found\n');
+    return undefined;
+  }
+  json(res, 200, debug.snapshot());
+  return undefined;
+}
+
 function healthRoute(res) {
   const usage = catalog.usage();
   const body = Buffer.from(
@@ -401,17 +410,13 @@ function importJobRoute(req, res, viewer, segments) {
 
   if (!job) {
     // The poll asks for a job that was there when the page was rendered and is
-    // gone now, either swept or lost to a restart. Answered as a job that
-    // ended rather than an error, because the poll has to be able to read it and
-    // follow the location back to the page that explains.
+    // gone now, either swept or lost to a restart
     if (segments[3]) return json(res, 200, { state: 'forgotten', location: page });
     html(res, 404, views.notFoundPage({ user: viewer, what: 'That import is not being tracked. A restart drops the ones still running.' }));
     return undefined;
   }
 
-  // The status comes before the page, because the poll has to keep getting JSON
-  // once the copy has failed. Answering it with the failure page instead is what
-  // would leave the bar crawling and the browser retrying a parse it can never
+
   // complete.
   if (segments[3]) {
     json(res, 200, {
@@ -443,11 +448,7 @@ function importJobRoute(req, res, viewer, segments) {
   return undefined;
 }
 
-// The reflog records who pushed each ref update, the commit object records
-// who wrote it. Those are different identities whenever a developer pushes
-// work committed under a shared git identity, which is why both are shown.
-// One pass over the branch reflogs builds a sha to pusher lookup; a
-// repository with no reflog has nothing to add.
+
 function pusherMap(dir) {
   const map = new Map();
   const logRoot = path.join(dir, 'logs', 'refs', 'heads');
@@ -528,6 +529,15 @@ function codeRoute(req, res, record, dir, viewer, rev, pathSegments) {
   const lastCommits = repo.lastCommitsForTree(dir, sha, pathSegments);
   const readmeNames = new Set(entries.filter((entry) => !entry.isTree).map((entry) => entry.name));
 
+  // Only the one README is read. Reading every blob in the directory to find one
+  // would pull the whole tree into memory on a page load that wants one file.
+  const readmeFile = pages.readmeName(readmeNames);
+  let readmeBody = null;
+  if (readmeFile && /\.mdx?$/i.test(readmeFile)) {
+    const target = repo.walkPath(dir, walk.sha, [...pathSegments, readmeFile]);
+    if (target && target.body && target.body.length <= pages.README_RENDER_BYTES) readmeBody = target.body;
+  }
+
   html(res, 200, pages.codePage({
     repo: record,
     viewer,
@@ -536,6 +546,7 @@ function codeRoute(req, res, record, dir, viewer, rev, pathSegments) {
     entries,
     lastCommits,
     readmeNames,
+    readmeBody,
     branches: context.branches,
     tags: context.tags,
     sizeBytes: context.sizeBytes,
