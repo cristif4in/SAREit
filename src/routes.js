@@ -18,7 +18,6 @@ const pages = require('./repoPages');
 const { PORT } = require('./config');
 
 const COMMIT_PAGE_SIZE = 60;
-const MAX_HISTORY = 400;
 
 function html(res, status, markup) {
   const body = Buffer.from(markup, 'utf8');
@@ -423,13 +422,47 @@ function importStatusRoute(req, res, record) {
 }
 
 
+// The pusher of every commit, keyed on the reflog files it was built from.
+//
+// Reading and parsing every reflog line is O(pushes) and it happened on every
+// commits page, which is why a repository with history was slow to the point of
+// timing out. The fingerprint is the set of files with their sizes and write
+// times, so a push changes it and the map is rebuilt, and nothing else does.
+const pusherCache = new Map();
+
+function reflogFingerprint(dir) {
+  const logRoot = path.join(dir, 'logs', 'refs', 'heads');
+  let entries;
+  try {
+    entries = fs.readdirSync(logRoot, { withFileTypes: true });
+  } catch {
+    return 'none';
+  }
+  const parts = [];
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    try {
+      const stat = fs.statSync(path.join(logRoot, entry.name));
+      parts.push(`${entry.name}:${stat.size}:${Math.floor(stat.mtimeMs)}`);
+    } catch {
+      continue;
+    }
+  }
+  return parts.sort().join('|') || 'empty';
+}
+
 function pusherMap(dir) {
+  const fingerprint = reflogFingerprint(dir);
+  const cached = pusherCache.get(dir);
+  if (cached && cached.fingerprint === fingerprint) return cached.map;
+
   const map = new Map();
   const logRoot = path.join(dir, 'logs', 'refs', 'heads');
   let files;
   try {
     files = fs.readdirSync(logRoot, { withFileTypes: true });
   } catch {
+    pusherCache.set(dir, { fingerprint, map });
     return map;
   }
   for (const file of files) {
@@ -452,6 +485,9 @@ function pusherMap(dir) {
       if (newSha && who && !map.has(newSha)) map.set(newSha, who);
     }
   }
+
+  if (pusherCache.size >= 64) pusherCache.delete(pusherCache.keys().next().value);
+  pusherCache.set(dir, { fingerprint, map });
   return map;
 }
 
@@ -619,14 +655,23 @@ function rawRoute(res, dir, parts) {
 function commitsRoute(req, res, record, dir, viewer, rev) {
   const context = repoContext(req, record);
   const sha = repo.resolveRevision(dir, rev);
-  const walked = sha ? repo.history(dir, sha, COMMIT_PAGE_SIZE) : { commits: [], truncated: false };
+  const query = new URL(req.url, 'http://x').searchParams;
+  // One more than the page size, because a full extra commit is how the view
+  // knows there is another page without asking for one.
+  const cursor = query.get('after') || '';
+  const walked = sha
+    ? repo.history(dir, sha, COMMIT_PAGE_SIZE + 1, undefined, cursor || null)
+    : { commits: [], truncated: false, cursor: null };
+  const page = walked.commits.slice(0, COMMIT_PAGE_SIZE);
+  const more = walked.commits.length > COMMIT_PAGE_SIZE || walked.truncated;
 
   html(res, 200, pages.commitsPage({
     repo: record,
     viewer,
     ref: rev === 'HEAD' ? headLabel(context) : rev,
-    commits: withPushers(dir, walked.commits),
-    truncated: walked.truncated,
+    commits: withPushers(dir, page),
+    truncated: more,
+    nextCursor: more ? walked.cursor : null,
     branches: context.branches,
     tags: context.tags,
     sizeBytes: context.sizeBytes,
@@ -676,15 +721,24 @@ function commitRoute(req, res, record, dir, viewer, sha) {
 
 function branchesRoute(req, res, record, dir, viewer) {
   const context = repoContext(req, record);
-  const head = repo.headRef(dir);
-  const headSha = head ? repo.resolveRefName(dir, head) : null;
-  const walked = headSha ? repo.history(dir, headSha, MAX_HISTORY) : { commits: [], truncated: false };
+  // Each row needs only the commit its branch points at, which resolveRefName
+  // answers without walking. This used to walk 400 commits to look up subjects
+  // the branch list already knew the sha of.
+  const tips = new Map();
+  for (const branch of context.branches) {
+    const tip = repo.resolveRefName(dir, `refs/heads/${branch.name}`);
+    if (!tip) continue;
+    const obj = repo.readObject(dir, tip);
+    if (!obj || obj.type !== 'commit') continue;
+    const commit = objects.parseCommit(obj.body);
+    tips.set(tip, { sha: tip, subject: commit.message.split('\n', 1)[0].trim() });
+  }
   html(res, 200, pages.branchesPage({
     repo: record,
     viewer,
     branches: context.branches,
     tags: context.tags,
-    commits: walked.commits,
+    commits: [...tips.values()],
     sizeBytes: context.sizeBytes,
     accountBytes: context.accountBytes,
     cloneUrl: context.cloneUrl,

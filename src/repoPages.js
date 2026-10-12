@@ -291,18 +291,23 @@ function codeRows(blob) {
     .join('');
 }
 
-function commitsPage({ repo: record, viewer, ref, commits, truncated, branches, tags, sizeBytes, accountBytes, cloneUrl, user, isEmpty }) {
+function commitsPage({ repo: record, viewer, ref, commits, truncated, nextCursor, branches, tags, sizeBytes, accountBytes, cloneUrl, user, isEmpty }) {
   const base = baseHref(record);
-  const notice = truncated
-    ? '<p class="pad muted">This history is deeper than the walk SAREit does for this page. Clone the repository to read the rest.</p>'
-    : '';
+  // The next page is asked for as the reader reaches this one rather than the
+  // whole history arriving with the first, which is what made this page cost the
+  // same however deep the repository was.
+  const more = nextCursor
+    ? `<div class="pad"><a class="btn btn-ghost" href="${base}/commits/${hrefPath([ref])}?after=${encodeURIComponent(nextCursor)}">Older commits</a></div>`
+    : truncated
+      ? '<p class="pad muted">This history is deeper than the walk SAREit does for this page. Clone the repository to read the rest.</p>'
+      : '';
   const main = `<div class="pathbar"><div><span class="crumb">Commits on ${esc(ref)}</span></div></div>
 ${
   isEmpty
     ? repoEmpty({ repo: record, cloneUrl })
     : `<ul class="commit-list">${commits
         .map((commit) => commitRow({ commit, base }))
-        .join('')}</ul>${notice}`
+        .join('')}</ul>${more}`
 }`;
 
   return layout({

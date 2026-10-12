@@ -716,14 +716,36 @@ function readTreeEntries(dir, treeSha) {
 // so rather than quietly showing a partial history.
 const MAX_HISTORY_READ = 4000;
 
-function history(dir, tipSha, limit, maxCommits = MAX_HISTORY_READ) {
+function history(dir, tipSha, limit, maxCommits = MAX_HISTORY_READ, cursorSha) {
   const seen = new Set();
   const collected = [];
   const queue = [{ sha: tipSha, depth: 0 }];
+
+  // A cursor makes the walk an offset rather than a full history read: the walk
+  // starts at the commit the previous page ended on, so a page of 60 costs 60
+  // inflates instead of 4000. Everything already shown is skipped on the way.
+  let skipping = !!cursorSha;
+  let foundCursor = !cursorSha;
+
+  // The page is filled from the walk, not from a slice of everything the walk
+  // read. Slicing at the end meant a page asking for 60 still inflated 4000
+  // commits to discard the rest, which is what made a commits page cost half a
+  // second on a repository with a few hundred commits.
+  const want = limit ? limit + 1 : 0;
+
   while (queue.length && seen.size < maxCommits) {
+    if (want && collected.length >= want) break;
     const { sha, depth } = queue.shift();
     if (seen.has(sha)) continue;
     seen.add(sha);
+
+    if (skipping) {
+      if (sha !== cursorSha) continue;
+      skipping = false;
+      foundCursor = true;
+      continue;
+    }
+
     const obj = readObject(dir, sha);
     if (!obj || obj.type !== 'commit') continue;
     const commit = parseCommit(obj.body);
@@ -742,8 +764,18 @@ function history(dir, tipSha, limit, maxCommits = MAX_HISTORY_READ) {
     for (const parent of commit.parents) queue.push({ sha: parent, depth: depth + 1 });
   }
   collected.sort((a, b) => b.committer.when - a.committer.when);
-  const truncated = queue.length > 0;
-  return { commits: limit ? collected.slice(0, limit) : collected, truncated };
+
+  // A cursor that never turned up means that commit is no longer reachable from
+  // this ref, so there is nothing after it to page through.
+  if (cursorSha && !foundCursor) return { commits: [], truncated: false };
+
+  const page = limit ? collected.slice(0, limit) : collected;
+  const last = page[page.length - 1];
+  return {
+    commits: page,
+    truncated: queue.length > 0 || (limit ? collected.length > limit : false),
+    cursor: last ? last.sha : null,
+  };
 }
 
 // The last commit that touched each entry of a directory.
