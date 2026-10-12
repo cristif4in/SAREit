@@ -1,0 +1,1075 @@
+/* Dark is the default. The light palette is a set of overrides on the same
+   variable names, selected by data-theme on the root element. public/app.js
+   sets that attribute before first paint from localStorage, and falls back to
+   dark when nothing has been chosen. */
+:root,
+[data-theme='dark'] {
+  --fg: #e6edf3;
+  --fg-soft: #b6c2cf;
+  --muted: #8b949e;
+  --border: #30363d;
+  --border-soft: #21262d;
+  --bg: #0d1117;
+  --subtle: #161b22;
+  --raised: #1c2128;
+  --accent: #58a6ff;
+  --success: #3fb950;
+  --success-fg: #0d1117;
+  --danger: #f85149;
+  --mark: #3b2e00;
+  --head: #010409;
+  --head-fg: #f0f6fc;
+  --add-bg: #12261e;
+  --add-line: #2ea043;
+  --del-bg: #2d1214;
+  --del-line: #f85149;
+  --gap-bg: #121d2f;
+  --glow: 248, 81, 73;
+  --glow-peak: 0.42;
+  color-scheme: dark;
+}
+
+[data-theme='light'] {
+  --fg: #1f2328;
+  --fg-soft: #424a53;
+  --muted: #59636e;
+  --border: #d1d9e0;
+  --border-soft: #eaeef2;
+  --bg: #ffffff;
+  --subtle: #f6f8fa;
+  --raised: #ffffff;
+  --accent: #0969da;
+  --success: #1a7f37;
+  --success-fg: #ffffff;
+  --danger: #cf222e;
+  --mark: #fff8c5;
+  --head: #1b1f24;
+  --head-fg: #ffffff;
+  --add-bg: #e6ffec;
+  --add-line: #2da44e;
+  --del-bg: #ffebe9;
+  --del-line: #cf222e;
+  --gap-bg: #ddf4ff;
+  /* A darker red and a lighter peak: the same values that read as a glow on a
+     near-black surface turn muddy on white. */
+  --glow: 207, 34, 46;
+  --glow-peak: 0.18;
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+/* The theme swap changes a handful of custom properties that everything else
+   reads. Transitioning the surfaces that carry their own colour, rather than
+   the root, means the fade only runs on a deliberate toggle: the class is
+   absent during the first paint, so nobody sees the page fade in on load. */
+.theme-animated,
+.theme-animated body,
+.theme-animated .masthead,
+.theme-animated .repo-main,
+.theme-animated .repo-card,
+.theme-animated .sidebar,
+.theme-animated .panel,
+.theme-animated .blob-table th,
+.theme-animated .pathbar,
+.theme-animated .branch-picker,
+.theme-animated .meta-strip,
+.theme-animated .diff-file summary,
+.theme-animated .gauge,
+.theme-animated .search input,
+.theme-animated .gauge-fill,
+.theme-animated .btn,
+.theme-animated .pill,
+.theme-animated .flash {
+  transition: background-color 220ms ease, border-color 220ms ease, color 220ms ease;
+}
+
+body {
+  margin: 0;
+  color: var(--fg);
+  background: var(--bg);
+  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+code,
+pre,
+.sha,
+input[type="text"],
+input[type="password"],
+input[type="search"],
+.token-value {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+.masthead {
+  background: var(--head);
+  color: var(--head-fg);
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.masthead-inner {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.masthead a,
+.masthead .account {
+  color: var(--head-fg);
+}
+
+.logo {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.theme-toggle {
+  border: 1px solid #3d444d;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--head-fg);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 9px;
+  white-space: nowrap;
+}
+
+.theme-toggle:hover {
+  background: #21262d;
+}
+
+.search {
+  flex: 1;
+  max-width: 320px;
+}
+
+.search input {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid #3d444d;
+  border-radius: 6px;
+  background: #0d1117;
+  color: var(--head-fg);
+  font-size: 13px;
+}
+
+.search input::placeholder {
+  color: #6e7681;
+}
+
+.masthead-nav {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 13px;
+}
+
+.linkish {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.masthead .linkish {
+  color: var(--head-fg);
+}
+
+.inline {
+  display: inline;
+}
+
+.page {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.narrow {
+  max-width: 620px;
+}
+
+.colophon {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 24px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* The only thing in the footer is a link, so it needs to look like one
+   against the muted footer colour rather than inherit body link styling
+   that was tuned for the page background. */
+.colophon a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.colophon a:hover {
+  text-decoration: underline;
+}
+
+h1 {
+  font-size: 24px;
+  margin: 0 0 16px;
+}
+
+h2 {
+  font-size: 16px;
+  margin: 0 0 8px;
+}
+
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.page-head h1,
+.page-head h2 {
+  margin: 0;
+}
+
+.btn {
+  display: inline-block;
+  padding: 6px 14px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: var(--success);
+  color: var(--success-fg);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.btn:hover {
+  text-decoration: none;
+  filter: brightness(1.1);
+}
+
+.btn-ghost {
+  background: var(--subtle);
+  color: var(--fg);
+  border-color: var(--border);
+}
+
+/* The masthead is dark in both themes, so a ghost button there cannot use
+   --subtle: in light mode that is a near-white box with white text on it,
+   which reads as an empty white square. These colours are tied to the bar
+   rather than to the page. */
+.masthead .btn-ghost {
+  background: transparent;
+  color: var(--head-fg);
+  border-color: #3d444d;
+}
+
+.masthead .btn-ghost:hover {
+  background: #21262d;
+}
+
+.btn-sm {
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+.btn-danger {
+  background: var(--danger);
+  color: #ffffff;
+}
+
+.flash {
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--subtle);
+}
+
+.flash-ok {
+  border-color: var(--add-line);
+  background: var(--add-bg);
+}
+
+.flash-error {
+  border-color: var(--del-line);
+  background: var(--del-bg);
+}
+
+.repo-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+
+.repo-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  background: var(--raised);
+}
+
+.repo-card p {
+  margin: 6px 0 0;
+}
+
+/* A red glow sweeping across the card from left to right, on a loop. The
+   gradient is wider than the card and is slid across with a transform, which
+   is the only part that animates on the compositor: animating background
+   position would repaint the card every frame. */
+.repo-card-highlight {
+  position: relative;
+  overflow: hidden;
+}
+
+.repo-card-highlight::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    100deg,
+    transparent 0%,
+    rgba(var(--glow), 0) 30%,
+    rgba(var(--glow), calc(var(--glow-peak) * 0.66)) 45%,
+    rgba(var(--glow), var(--glow-peak)) 50%,
+    rgba(var(--glow), calc(var(--glow-peak) * 0.66)) 55%,
+    rgba(var(--glow), 0) 70%,
+    transparent 100%
+  );
+  background-size: 220% 100%;
+  background-repeat: no-repeat;
+  animation: card-glow 3.4s ease-in-out infinite;
+}
+
+/* A second pass along the top edge, so the glow reads as coming from the left
+   rather than simply lighting up in place. */
+.repo-card-highlight::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 2px;
+  width: 45%;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgb(var(--glow)), rgba(var(--glow), 0.4), transparent);
+  animation: card-edge 3.4s ease-in-out infinite;
+}
+
+@keyframes card-glow {
+  0% {
+    background-position: 190% 0;
+  }
+  55%,
+  100% {
+    background-position: -90% 0;
+  }
+}
+
+@keyframes card-edge {
+  0% {
+    transform: translateX(-110%);
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  55%,
+  100% {
+    transform: translateX(240%);
+    opacity: 0;
+  }
+}
+
+.repo-card-highlight > * {
+  position: relative;
+  z-index: 1;
+}
+
+.repo-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.small {
+  font-size: 12px;
+}
+
+.pill {
+  display: inline-block;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--subtle);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.pill-private {
+  background: var(--mark);
+  border-color: #d4a72c;
+  color: var(--fg-soft);
+}
+
+.pill-merge {
+  background: var(--gap-bg);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.stack {
+  display: grid;
+  gap: 14px;
+  max-width: 460px;
+}
+
+.stack label {
+  display: grid;
+  gap: 5px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.stack label.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 400;
+}
+
+input[type="text"],
+input[type="password"],
+select {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--fg);
+  font-weight: 400;
+}
+
+input[type="text"]:focus,
+input[type="password"]:focus,
+select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.panel {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 20px;
+  background: var(--raised);
+}
+
+.profile-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--head);
+  color: var(--head-fg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+}
+
+.avatar.sm {
+  width: 32px;
+  height: 32px;
+  font-size: 14px;
+  flex: none;
+}
+
+.repo-head {
+  padding-bottom: 8px;
+}
+
+.repo-title {
+  font-size: 20px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.repo-title .owner {
+  color: var(--accent);
+  font-weight: 300;
+}
+
+.repo-title .name {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.repo-title .sep {
+  color: var(--muted);
+}
+
+.repo-meta {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  display: flex;
+  gap: 16px;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin: 12px 0 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tab {
+  padding: 8px 14px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 6px 6px 0 0;
+  color: var(--fg);
+  margin-bottom: -1px;
+}
+
+.tab-active {
+  border-color: var(--border);
+  background: var(--bg);
+  font-weight: 600;
+}
+
+.tab:hover {
+  text-decoration: none;
+  background: var(--subtle);
+}
+
+.tab-active:hover {
+  background: var(--bg);
+}
+
+.repo-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 270px;
+  gap: 24px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .repo-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.repo-main {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.branch-picker {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--subtle);
+}
+
+.pathbar {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--subtle);
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.crumb {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+
+.crumb-sep {
+  color: var(--muted);
+  padding: 0 2px;
+}
+
+.up {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  padding-right: 6px;
+}
+
+.blobbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.blobbar .btn {
+  margin-left: auto;
+}
+
+.blob-table,
+.code-table,
+.diff-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.blob-table th {
+  text-align: left;
+  font-weight: 400;
+  color: var(--muted);
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--subtle);
+}
+
+.blob-table td {
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--border-soft);
+  vertical-align: top;
+}
+
+.blob-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.blob-table tr:hover td {
+  background: var(--subtle);
+}
+
+.blob-table .name a {
+  color: var(--fg);
+  font-weight: 500;
+}
+
+.blob-table .icon,
+.blob-table th.icon {
+  width: 26px;
+  padding-left: 14px;
+  padding-right: 0;
+}
+
+.blob-table .msg {
+  width: 42%;
+  font-size: 12px;
+}
+
+/* The last commit that touched a file. The subject is the link, so it does
+   not have to fit for the row to be clickable. */
+.blob-table .msg a {
+  color: var(--muted);
+}
+
+.blob-table .msg a:hover {
+  color: var(--accent);
+}
+
+.ico {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: var(--subtle);
+  vertical-align: -2px;
+}
+
+.ico-dir {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.ico-code {
+  background: #a371f7;
+  border-color: #a371f7;
+}
+
+.ico-doc {
+  background: var(--fg-soft);
+  border-color: var(--fg-soft);
+}
+
+.ico-binary {
+  background: #d29922;
+  border-color: #d29922;
+}
+
+.readme {
+  padding: 12px 14px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.code-table td,
+.diff-table td {
+  border-bottom: 1px solid var(--border-soft);
+  vertical-align: top;
+}
+
+.code-table pre,
+.diff-table pre {
+  margin: 0;
+  padding: 0 14px;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.lineno {
+  width: 1%;
+  padding: 0 10px;
+  text-align: right;
+  color: var(--muted);
+  background: var(--subtle);
+  border-right: 1px solid var(--border);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.commit-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.commit-row {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.commit-row:last-child {
+  border-bottom: 0;
+}
+
+.commit-subject {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.commit-subject a {
+  color: var(--fg);
+  font-weight: 500;
+}
+
+.commit-meta {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.commit-banner {
+  display: flex;
+  gap: 12px;
+  padding: 14px;
+}
+
+.commit-banner .commit-subject {
+  margin-top: 4px;
+  font-size: 15px;
+}
+
+.meta-strip {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  background: var(--subtle);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.commit-message {
+  margin: 0;
+  padding: 12px 14px;
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
+.diff-file {
+  border-top: 1px solid var(--border);
+}
+
+.diff-file summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  cursor: pointer;
+  font-size: 13px;
+  background: var(--subtle);
+}
+
+.diff-file summary a {
+  color: var(--fg);
+  font-weight: 500;
+}
+
+.stat-add {
+  color: var(--success);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.stat-del {
+  color: var(--danger);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.stat-bar {
+  display: inline-flex;
+  width: 80px;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--border-soft);
+}
+
+.stat-bar i {
+  display: block;
+  height: 100%;
+}
+
+.bar-add {
+  background: var(--add-line);
+}
+
+.bar-del {
+  background: var(--del-line);
+}
+
+.d-add pre {
+  background: var(--add-bg);
+}
+
+.d-del pre {
+  background: var(--del-bg);
+}
+
+.d-add .lineno,
+.d-del .lineno {
+  background: transparent;
+}
+
+.marker {
+  display: inline-block;
+  width: 14px;
+  color: var(--muted);
+}
+
+tr.gap td {
+  padding: 4px 14px;
+  background: var(--gap-bg);
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.sha {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.pad {
+  padding: 14px;
+}
+
+.empty-repo {
+  padding: 16px;
+}
+
+.empty-repo pre {
+  background: var(--subtle);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  overflow-x: auto;
+  font-size: 12px;
+}
+
+.sidebar {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  font-size: 13px;
+  background: var(--raised);
+}
+
+.sidebar h2 {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+
+.sidebar h2:not(:first-child) {
+  margin-top: 18px;
+}
+
+.sidebar p {
+  margin: 0 0 6px;
+}
+
+.facts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.facts li {
+  padding: 2px 0;
+}
+
+.clone input {
+  width: 100%;
+  font-size: 11px;
+  padding: 5px 8px;
+}
+
+.gauge {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border-soft);
+  overflow: hidden;
+  margin: 6px 0 4px;
+}
+
+.gauge-fill {
+  height: 100%;
+  background: var(--success);
+}
+
+.token-value {
+  font-size: 12px;
+  word-break: break-all;
+  background: var(--subtle);
+  border: 1px solid var(--add-line);
+  border-radius: 6px;
+  padding: 10px;
+  margin: 8px 0;
+  user-select: all;
+}
+
+.token-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.token-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.token-list li:last-child {
+  border-bottom: 0;
+}
+
+.token-revoked {
+  opacity: 0.6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+
+  /* With the animation off the gradient would sit at whatever position the
+     shorthand left it, so park it in the middle where it reads as a plain
+     tint rather than a stray highlight across one edge. */
+  .repo-card-highlight::before {
+    background-position: 50% 0;
+  }
+
+  .repo-card-highlight::after {
+    display: none;
+  }
+}
+
+@media (max-width: 620px) {
+  .page,
+  .masthead-inner,
+  .colophon {
+    padding: 16px;
+  }
+
+  .search {
+    display: none;
+  }
+}

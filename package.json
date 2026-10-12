@@ -1,0 +1,16 @@
+{
+  "name": "sareit",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Platform",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node test/run.js",
+    "test:quick": "node test/run.js headers e2e auth packed resilience"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {}
+}
