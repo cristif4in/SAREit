@@ -114,7 +114,9 @@ function loadRepoOr404(req, res, owner, name, viewer) {
     return null;
   }
   const dir = storage.repoDir(record.owner, record.name);
-  if (!repo.exists(dir)) {
+  // A queued or running import has not written its directory yet, which is not
+  // the damage this check is looking for.
+  if (!repo.exists(dir) && !imports.jobFor(record.owner, record.name)) {
     html(res, 500, views.notFoundPage({ user: viewer, what: 'Repository directory is missing on disk.' }));
     return null;
   }
@@ -132,8 +134,8 @@ async function handleWeb(req, res, segments, url) {
   if (head === 'logout' && segments.length === 1) return logout(req, res);
   if (head === 'new' && segments.length === 1) return newRepoRoute(req, res, viewer);
   if (head === '_debug' && segments.length === 2 && segments[1] === 'state') return debugStateRoute(req, res, viewer);
-  if (head === 'new' && segments[1] === 'import' && (segments.length === 3 || segments[3] === 'status')) {
-    return importJobRoute(req, res, viewer, segments);
+  if (head === 'new' && segments[1] === 'import' && segments.length === 3) {
+    return redirect(res, '/');
   }
   if (head === 'healthz' && segments.length === 1) return healthRoute(res);
 
@@ -152,6 +154,7 @@ async function handleWeb(req, res, segments, url) {
 
   const section = segments[2];
   if (section === 'settings') return settingsRoute(req, res, record, dir, viewer, segments);
+  if (section === 'import' && segments.length === 3) return importStatusRoute(req, res, record);
   if (section === 'branches') return branchesRoute(req, res, record, dir, viewer);
   if (section === 'tags') return tagsRoute(req, res, record, dir, viewer);
   if (section === 'commit' && segments.length === 4) return commitRoute(req, res, record, dir, viewer, segments[3]);
@@ -378,8 +381,19 @@ async function newRepoRoute(req, res, viewer) {
       return undefined;
     }
 
-    const job = imports.start({ owner: viewer.login, name, description, isPrivate, source: remote, typed: source });
-    redirect(res, `/new/import/${job.id}`);
+    // Reserved private regardless of the checkbox: the copy is not finished, so
+    // it belongs to its owner until it is. The choice is applied when it lands.
+    const record = storage.reserveRepository(viewer.login, {
+      name,
+      description,
+      isPrivate: true,
+      headBranch: 'main',
+      importedFrom: remote,
+    });
+    imports.start({ owner: record.owner, name: record.name, description, isPrivate, source: remote, typed: source });
+    log.info('import started', { repo: `${record.owner}/${record.name}`, from: source });
+    security.audit('import started', { repo: `${record.owner}/${record.name}`, from: source, by: viewer.login });
+    redirect(res, `/${encodeURIComponent(record.owner)}/${encodeURIComponent(record.name)}`);
     return undefined;
   }
 
@@ -394,58 +408,17 @@ async function newRepoRoute(req, res, viewer) {
   return undefined;
 }
 
-// A failed copy is rendered as the new repository page again, with the values
-// the job was started from, so a URL that turned out to be wrong does not have
-// to be typed a second time.
-function importJobRoute(req, res, viewer, segments) {
+// The import status for a repository, polled by the repository's own page. A
+// repository mid-import is private, so the owner check has already run by the
+// time this is reached and only that owner is asking.
+function importStatusRoute(req, res, record) {
   if (req.method !== 'GET') {
     res.writeHead(405, { Allow: 'GET', 'Content-Length': 0 });
     res.end();
     return undefined;
   }
-
-  const job = viewer ? imports.find(segments[2], viewer.login) : null;
-  const page = `/new/import/${segments[2]}`;
-
-  if (!job) {
-    // The poll is for a job that existed when the page was rendered and is gone
-    // now, swept or lost to a restart. Answered as a job that ended rather than
-    // an error, so the poll can follow the location back to the explanation.
-    if (segments[3]) return json(res, 200, { state: 'forgotten', location: page });
-    html(res, 404, views.notFoundPage({ user: viewer, what: 'That import is not being tracked. A restart drops the ones still running.' }));
-    return undefined;
-  }
-
-  // Status before the failure page: the poll has to keep getting JSON once the
-  // copy has failed, and HTML there is what would leave the bar crawling
-  // against a parse it can never complete.
-  if (segments[3]) {
-    json(res, 200, {
-      state: job.state,
-      percent: job.percent,
-      reported: job.reported,
-      phase: job.phase,
-      detail: job.detail,
-      error: job.error,
-      location:
-        job.state === 'done'
-          ? `/${encodeURIComponent(job.owner)}/${encodeURIComponent(job.name)}?msg=Imported`
-          : page,
-    });
-    return undefined;
-  }
-
-  if (job.state === 'failed') {
-    html(res, 200, views.newRepoPage({
-      user: viewer,
-      error: `Import failed: ${job.error}`,
-      values: { name: job.name, description: job.description, private: job.isPrivate, import: job.typed },
-      csrf: csrfField(req),
-    }));
-    return undefined;
-  }
-
-  html(res, 200, views.importPage({ user: viewer, job, statusUrl: `${page}/status` }));
+  const job = imports.jobFor(record.owner, record.name);
+  json(res, 200, job ? imports.status(job) : { state: 'idle', location: `/${encodeURIComponent(record.owner)}/${encodeURIComponent(record.name)}` });
   return undefined;
 }
 
@@ -499,7 +472,24 @@ function commitOfRef(dir, rev) {
 
 function codeRoute(req, res, record, dir, viewer, rev, pathSegments) {
   const context = repoContext(req, record);
-  const commit = commitOfRef(dir, rev);
+  const commit = repo.exists(dir) ? commitOfRef(dir, rev) : null;
+
+  // A repository whose copy is still running has no objects to walk, so the
+  // import panel stands in for the file list. It is also the page to come back
+  // to, which is why the owner is sent here rather than to a progress page that
+  // would be lost on the next navigation.
+  const job = imports.jobFor(record.owner, record.name);
+  if (job && !commit) {
+    html(res, 200, pages.importPage({
+      record,
+      job: imports.status(job),
+      statusUrl: `/${encodeURIComponent(record.owner)}/${encodeURIComponent(record.name)}/import`,
+      context,
+      viewer,
+      user: viewer,
+    }));
+    return;
+  }
 
   if (!commit) {
     html(res, 200, pages.emptyPage({

@@ -114,6 +114,15 @@ function createRepository(owner, fields) {
   }
 }
 
+// The row without the directory. An import writes the directory itself with
+// git clone --bare, and cloning into a directory that already exists and is not
+// empty fails, so the row goes in first and git creates the directory.
+function reserveRepository(owner, fields) {
+  const record = accounts.createRepo(owner, fields);
+  catalog.upsert(record);
+  return record;
+}
+
 function deleteRepository(owner, name) {
   fs.rmSync(repoDir(owner, name), { recursive: true, force: true });
   catalog.remove(owner, name);
@@ -173,6 +182,7 @@ module.exports = {
   checkBudget,
   ensureRepoDir,
   createRepository,
+  reserveRepository,
   updateRepository,
   deleteRepository,
   listOrphanedDirs,

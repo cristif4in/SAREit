@@ -62,15 +62,16 @@ async function postWithCsrf(pagePath, jar, fields) {
   });
 }
 
-// The import runs as a job the server owns, so the POST returns while the clone
-// is still going. This waits for it, which the pack reading below needs.
+// The POST reserves the row and returns while the clone is still going, so this
+// waits on the repository's own status endpoint, which the pack reading below
+// needs to have finished.
 async function awaitImport(res, jar) {
   const page = res.headers.location;
   for (let poll = 0; poll < 1200; poll++) {
-    const answer = await request('GET', `${page}/status`, { headers: { Cookie: jar } });
+    const answer = await request('GET', `${page}/import`, { headers: { Cookie: jar } });
     if (answer.status !== 200) throw new Error(`import status unavailable: ${answer.status}`);
     const status = JSON.parse(answer.body.toString('utf8'));
-    if (status.state !== 'running') {
+    if (status.state !== 'running' && status.state !== 'queued') {
       if (status.state !== 'done') throw new Error(`import ended as ${status.state}: ${status.error || status.phase}`);
       return status;
     }

@@ -89,16 +89,16 @@ async function postWithCsrf(pagePath, jar, fields) {
   });
 }
 
-// An import is a job the server runs on its own, so the POST comes back at once
-// and the copy is still going. Follow it through the status endpoint the import
-// page polls, which is where the job reports how far it has got.
+// An import reserves the row and redirects to the repository page, which is
+// where the progress panel lives. Poll that page's own status endpoint until the
+// copy is no longer running.
 async function awaitImport(res, jar) {
   const page = res.headers.location;
   for (let poll = 0; poll < 1200; poll++) {
-    const answer = await request('GET', `${page}/status`, { headers: { Cookie: jar } });
+    const answer = await request('GET', `${page}/import`, { headers: { Cookie: jar } });
     if (answer.status !== 200) throw new Error(`import status unavailable: ${answer.status}`);
     const status = JSON.parse(answer.body.toString('utf8'));
-    if (status.state !== 'running') {
+    if (status.state !== 'running' && status.state !== 'queued') {
       if (status.state !== 'done') throw new Error(`import ended as ${status.state}: ${status.error || status.phase}`);
       return status;
     }
@@ -318,16 +318,24 @@ async function main() {
   run(['commit', '-q', '-m', 'Add a nested binary blob'], origin);
 
   res = await postWithCsrf('/new', jar.value, { name: 'imported', import: `origin${suffix}`, description: 'brought over' });
-  check('import repo', res.status === 302 && res.headers.location.startsWith('/new/import/'), res.status === 302 ? res.headers.location : res.body.toString('utf8').slice(0, 300));
-  const importPage = res.status === 302 ? await request('GET', res.headers.location, { headers: { Cookie: jar.value } }) : null;
+  check('import repo', res.status === 302 && res.headers.location.endsWith('/imported'), res.status === 302 ? res.headers.location : res.body.toString('utf8').slice(0, 300));
+
+  // The repository exists from the POST, so it has to be private until the copy
+  // lands, and it is the page the progress panel is on.
+  const duringPage = res.status === 302 ? await request('GET', res.headers.location, { headers: { Cookie: jar.value } }) : null;
   check(
-    'the import page offers a progress bar',
-    importPage && importPage.body.includes('import-bar') && importPage.body.includes('role="progressbar"'),
-    importPage ? importPage.body.includes('import-bar') ? 'bar present' : 'no bar in the markup' : 'no page'
+    'the repository page carries the progress bar while importing',
+    duringPage && duringPage.body.includes('import-bar') && duringPage.body.includes('role="progressbar"'),
+    duringPage ? (duringPage.body.includes('import-bar') ? 'bar present' : 'no bar in the markup') : 'no page'
   );
+  const anonDuring = await request('GET', res.status === 302 ? res.headers.location : '/');
+  check('the repository is private while the copy runs', anonDuring.status === 404, `anonymous got ${anonDuring.status}`);
 
   const importStatus = res.status === 302 ? await awaitImport(res, jar.value) : null;
   check('import finished', !!importStatus, importStatus ? `location ${importStatus.location}` : 'not started');
+
+  const anonAfter = await request('GET', `/${login}/imported`);
+  check('the repository is public once the copy lands', anonAfter.status === 200, `anonymous got ${anonAfter.status}`);
 
   const importedUrl = `${BASE}/${login}/imported.git`;
   const importedClone = path.join(SCRATCH, 'imported-clone');

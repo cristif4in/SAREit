@@ -1,11 +1,13 @@
-// Importing a remote into an account, as a job that outlives the request.
+// Importing a remote into an account, as a queued background job.
 //
-// git clone --progress writes its phase percentages to stderr, and those are
-// what the page's progress bar is made of. A clone that reports none, which is
-// what a copy from a local directory looks like, leaves the bar indeterminate.
+// The repository row is written before the clone starts and is private until it
+// finishes, so the only person who sees an import in progress is the one who
+// started it, and /owner/name is the page to come back to.
 //
-// The job table is in memory: a restart loses it, and the page reports that
-// rather than waiting on a copy that is no longer running.
+// git clone --progress writes its phase percentages to stderr, which is what the
+// page's bar is built from. A clone that reports none, which is what a copy from
+// a local directory looks like, leaves the bar indeterminate and the elapsed
+// counter as the only thing moving.
 
 const fs = require('fs');
 const path = require('path');
@@ -15,18 +17,26 @@ const storage = require('./storage');
 const catalog = require('./catalog');
 const repo = require('./git/repo');
 const security = require('./security');
+const accounts = require('./accounts');
 const log = require('./log');
+const { MAX_REPO_BYTES } = require('./config');
 
 const CLONE_TIMEOUT_MS = 10 * 60 * 1000;
-
-// Long enough for the page to come back from a reload or a sleeping laptop and
-// still read how the copy ended. Past that the job is dropped.
 const JOB_TTL_MS = 10 * 60 * 1000;
 
-// Each entry is a few hundred bytes, so this only bites against a lot of
-// imports at once. The oldest finished job goes to make room, never a running
-// one.
-const MAX_JOBS = 64;
+// One clone at a time. Two concurrent clones competing with the request
+// handlers for the same cores is what makes the whole instance feel slow, and a
+// queue bounds that without patching git.
+const IMPORT_CONCURRENCY = 1;
+
+// Lower process priority where the platform has one. Windows has nothing
+// reachable from here, so an instance there gets the queue without the nice.
+const IMPORT_NICE = 10;
+
+// pack.threads=1 stops delta resolution fanning out across cores, gc.auto=0
+// stops a garbage collection firing the moment the clone lands, and a small
+// bigFileThreshold keeps large blobs out of the delta heap.
+const CLONE_OPTIONS = ['-c', 'pack.threads=1', '-c', 'gc.auto=0', '-c', 'core.bigFileThreshold=4m'];
 
 // git reports a percentage per phase and never one for the whole clone, and the
 // bar is a single number, so the phases get shares of it: receiving the objects
@@ -44,14 +54,28 @@ const PHASES = [
 ];
 
 const jobs = new Map();
+const queue = [];
+const running = new Set();
+
+function key(owner, name) {
+  return `${owner.toLowerCase()}/${name.toLowerCase()}`;
+}
+
+// The job for a repository, while there is one worth looking at. A finished job
+// is left out so the repository page shows the repository rather than a report
+// on the copy that produced it.
+function jobFor(owner, name) {
+  const job = jobs.get(key(owner, name));
+  return job && job.state !== 'done' ? job : null;
+}
 
 // The source string is handed to git as an argument, so it must not be able to
 // look like an option. A leading dash would otherwise turn the remote into a
 // flag such as --upload-pack and run a command on this machine. Validating
 // that it is a real remote URL also keeps file:// out.
 //
-// SAREIT_IMPORT_DIR, when set, is a staging directory the operator controls.
-// A signed-in account may clone from inside it and nowhere else on this
+// SAREIT_IMPORT_DIR, when set, is a staging directory the operator controls. A
+// signed-in account may clone from inside it and nowhere else on this
 // filesystem, which is what makes an offline migration possible without letting
 // anyone read the server's own files through the import form.
 function validSource(source) {
@@ -80,61 +104,58 @@ function validSource(source) {
   }
 }
 
-// A job that is not the viewer's reads as nonexistent, so an id belonging to
-// another account cannot be probed by the difference.
-function find(id, login) {
-  const job = jobs.get(String(id));
-  if (!job || !login) return null;
-  return job.owner.toLowerCase() === String(login).toLowerCase() ? job : null;
-}
-
 function start({ owner, name, description, isPrivate, source, typed = source }) {
   sweep();
-  for (const job of jobs.values()) {
-    if (job.state === 'running' && job.owner.toLowerCase() === owner.toLowerCase() && job.name.toLowerCase() === name.toLowerCase()) {
-      // A second click on Import would clone into the directory the first one is
-      // still writing, and its cleanup would take that copy with it.
-      return job;
-    }
-  }
 
   const job = {
-    id: crypto.randomBytes(16).toString('hex'),
     owner,
     name,
     description,
     isPrivate,
-    // What the form said, which is not what git is given: a source inside the
-    // staging directory resolves to an absolute path, and that is the wrong
-    // thing to hand back to a form asking for a remote.
+    // What the form said. A source inside the staging directory resolves to an
+    // absolute path, which is the wrong thing to hand back to a form.
     typed,
     source,
-    state: 'running',
-    phase: 'Starting the clone',
+    state: 'queued',
+    phase: 'Waiting for a slot',
     percent: 0,
     reported: false,
     detail: '',
     error: '',
-    startedAt: Date.now(),
+    queuedAt: Date.now(),
     finishedAt: 0,
     pending: '',
     tail: [],
     timedOut: false,
   };
-  jobs.set(job.id, job);
-  log.info('import started', { owner, name, from: job.typed });
-  run(job);
+  jobs.set(key(owner, name), job);
+
+  queue.push(job);
+  log.info('import queued', { owner, name, from: typed, waiting: queue.length });
+  pump();
   return job;
 }
 
-// git clone --bare copies objects and refs as they are, so messages, authors,
-// dates, tags and notes survive the move untouched and a clone of the result
-// reproduces the original history.
+function pump() {
+  while (running.size < IMPORT_CONCURRENCY && queue.length) {
+    const job = queue.shift();
+    running.add(job);
+    job.state = 'running';
+    job.phase = 'Starting git';
+    run(job);
+  }
+}
+
+function spawnGit(args, options) {
+  if (process.platform === 'win32') return spawn('git', args, options);
+  return spawn('nice', ['-n', String(IMPORT_NICE), 'git', ...args], options);
+}
+
 function run(job) {
   const dir = storage.repoDir(job.owner, job.name);
   fs.mkdirSync(path.dirname(dir), { recursive: true });
 
-  const child = spawn('git', ['clone', '--bare', '--progress', '--', job.source, dir], {
+  const child = spawnGit([...CLONE_OPTIONS, 'clone', '--bare', '--progress', '--', job.source, dir], {
     cwd: path.dirname(dir),
     // GIT_TERMINAL_PROMPT stops git blocking on a credential prompt it can never
     // answer, which would otherwise hold the job open until the timeout.
@@ -147,7 +168,6 @@ function run(job) {
     child.kill();
   }, CLONE_TIMEOUT_MS);
 
-  child.stderr.on('data', (chunk) => readProgress(job, chunk));
   // A spawn that never started emits both of these, so the first to land settles
   // the job; otherwise the second replaces the real reason with an exit code.
   let settled = false;
@@ -158,6 +178,7 @@ function run(job) {
     fail(job, dir, reason);
   };
 
+  child.stderr.on('data', (chunk) => readProgress(job, chunk));
   child.on('error', (err) => done(err.message));
   child.on('close', (code) => {
     if (settled) return;
@@ -171,50 +192,62 @@ function run(job) {
   });
 }
 
+// The directory is written, so the row leaves the queue state it was in and the
+// repository becomes visible under the visibility the form asked for.
 function adopt(job, dir) {
   try {
     const headRef = repo.headRef(dir);
     const sizeBytes = storage.repoSize(dir);
     const over = storage.checkBudget(job.owner, job.name, 0);
     if (over) throw new Error(over);
+    if (sizeBytes > MAX_REPO_BYTES) {
+      throw new Error(`imported repository is ${Math.round(sizeBytes / 1048576)}MB, over the ${Math.round(MAX_REPO_BYTES / 1048576)}MB limit`);
+    }
 
-    const record = storage.createRepository(job.owner, {
-      name: job.name,
+    accounts.updateRepo(job.owner, job.name, {
       description: job.description,
-      isPrivate: job.isPrivate,
+      private: job.isPrivate,
       headBranch: headRef ? headRef.slice('refs/heads/'.length) : 'main',
-      importedFrom: job.source,
     });
-    catalog.storeSize(record.owner, record.name, sizeBytes);
+    catalog.describe(job.owner, job.name, { description: job.description, private: job.isPrivate });
+    catalog.storeSize(job.owner, job.name, sizeBytes);
 
     job.state = 'done';
     job.percent = 100;
+    job.reported = true;
     job.phase = 'Imported';
     job.finishedAt = Date.now();
+    running.delete(job);
+    log.info('import finished', {
+      repo: `${job.owner}/${job.name}`,
+      mb: Math.round(sizeBytes / 1048576),
+      seconds: Math.round((job.finishedAt - job.queuedAt) / 1000),
+    });
     security.audit('repository imported', {
-      repo: `${record.owner}/${record.name}`,
-      from: job.source,
+      repo: `${job.owner}/${job.name}`,
+      from: job.typed,
       mb: Math.round(sizeBytes / 1048576),
       by: job.owner,
     });
-    log.info('import finished', {
-      repo: `${record.owner}/${record.name}`,
-      mb: Math.round(sizeBytes / 1048576),
-      seconds: Math.round((job.finishedAt - job.startedAt) / 1000),
-    });
+    pump();
   } catch (err) {
     fail(job, dir, err.message);
   }
 }
 
+// The row stays. The page it is on is where the reason is shown and where the
+// owner can delete it, and a repository row with no directory is what a failed
+// copy leaves behind rather than something to be tidied away here.
 function fail(job, dir, reason) {
   fs.rmSync(dir, { recursive: true, force: true });
   job.state = 'failed';
   job.phase = 'Import failed';
   job.error = reason;
   job.finishedAt = Date.now();
-  log.error('import failed', { owner: job.owner, name: job.name, from: job.source, reason });
-  security.audit('import failed', { login: job.owner, from: job.source, reason });
+  running.delete(job);
+  log.error('import failed', { owner: job.owner, name: job.name, from: job.typed, reason });
+  security.audit('import failed', { login: job.owner, from: job.typed, reason });
+  pump();
 }
 
 // git --progress separates its updates with a bare carriage return and ends the
@@ -253,14 +286,23 @@ function applyLine(job, line) {
 function sweep() {
   const now = Date.now();
   for (const [id, job] of jobs) {
-    if (job.state !== 'running' && now - job.finishedAt > JOB_TTL_MS) jobs.delete(id);
-  }
-  while (jobs.size > MAX_JOBS) {
-    const finished = [...jobs.values()].filter((job) => job.state !== 'running');
-    if (!finished.length) break;
-    finished.sort((a, b) => a.finishedAt - b.finishedAt);
-    jobs.delete(finished[0].id);
+    if (job.state !== 'running' && job.state !== 'queued' && now - job.finishedAt > JOB_TTL_MS) jobs.delete(id);
   }
 }
 
-module.exports = { validSource, find, start };
+// What the page polls. The elapsed count is computed here rather than in the
+// browser so a reload does not restart it.
+function status(job) {
+  return {
+    state: job.state,
+    percent: job.percent,
+    reported: job.reported,
+    phase: job.phase,
+    detail: job.detail,
+    error: job.error,
+    seconds: Math.round(((job.finishedAt || Date.now()) - job.queuedAt) / 1000),
+    location: `/${encodeURIComponent(job.owner)}/${encodeURIComponent(job.name)}`,
+  };
+}
+
+module.exports = { validSource, start, jobFor, status, sweep, IMPORT_CONCURRENCY };

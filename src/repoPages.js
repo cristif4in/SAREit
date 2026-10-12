@@ -169,6 +169,59 @@ ${readmeLine}`;
   });
 }
 
+// The repository page while its copy is running. Drawn from the job as it
+// stands so a reload is right, and public/app.js then follows the status.
+function importPage({ record, job, statusUrl, context, viewer, user }) {
+  const base = baseHref(record);
+  const percent = Math.max(0, Math.min(100, job.percent));
+  const moving = !job.reported;
+  const source = record.importedFrom || 'a git remote';
+  const elapsed = job.seconds < 60 ? `${job.seconds}s` : `${Math.floor(job.seconds / 60)}m ${job.seconds % 60}s`;
+
+  const body = job.state === 'failed'
+    ? `<div class="flash flash-error">Import failed: ${esc(job.error)}</div>
+       <p class="muted small">The repository row is still here with nothing in it.</p>
+       <p><a class="linkish" href="${base}/settings">Delete this repository</a></p>`
+    : `<p class="import-line"><span data-import-phase>${esc(job.phase)}</span>${job.detail ? ` <span class="muted small">${esc(job.detail)}</span>` : ''}</p>
+       <p class="muted small" data-import-elapsed>${esc(elapsed)} elapsed. Private until it finishes. Leave this page and come back whenever.</p>
+       <noscript><p class="muted small">Reload to see how far the copy has got.</p></noscript>`;
+
+  return layout({
+    title: `Importing ${record.name}`,
+    user,
+    body: `${repoHeader({
+    repo: record,
+    viewer,
+    active: 'code',
+    ref: context.defaultBranch,
+    branchesCount: context.branches.length,
+    tagsCount: context.tags.length,
+  })}
+<div class="repo-body">
+  <section class="repo-main">
+    <section class="panel" data-import-status="${esc(statusUrl)}">
+      <h2>Importing from ${esc(source)}</h2>
+      <div class="import-bar" role="progressbar" aria-label="Import progress" aria-valuemin="0" aria-valuemax="100"${
+        moving || job.state === 'failed' ? '' : ` aria-valuenow="${percent}"`
+      }>
+        <div class="import-fill" data-import-bar style="width:${moving ? 30 : percent}%"${moving ? ' data-moving' : ''}></div>
+      </div>
+      ${body}
+    </section>
+  </section>
+  ${repoSidebar({
+    repo: record,
+    sizeBytes: context.sizeBytes,
+    accountBytes: context.accountBytes,
+    cloneUrl: context.cloneUrl,
+    defaultBranch: context.defaultBranch,
+    isOwner: canManage(record, viewer),
+    importedFrom: record.importedFrom,
+  })}
+</div>`,
+  });
+}
+
 function readmeName(names) {
   for (const candidate of ['README.md', 'readme.md', 'Readme.md', 'README', 'README.txt']) {
     if (names.has(candidate)) return candidate;
@@ -541,6 +594,7 @@ function settingsPage({ repo: record, user, branches, sizeBytes, accountBytes, f
 
 module.exports = {
   codePage,
+  importPage,
   emptyPage,
   blobPage,
   commitsPage,

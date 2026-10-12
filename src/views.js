@@ -302,6 +302,7 @@ function newRepoPage({ user, error, values, csrf }) {
   <section class="panel">
     <h2>Import an existing project</h2>
     <p class="muted">Copies a git remote into this account. Commit messages, authors, dates, tags and branches are copied as they are, and nothing here rewrites them afterwards.</p>
+    <p class="muted small">The repository appears straight away and stays private to you until the copy finishes, then follows the checkbox. One import runs at a time so the rest of the site keeps answering.</p>
     <form method="post" action="/new" class="stack">
       ${token}
       <label>Repository name
@@ -324,36 +325,7 @@ function newRepoPage({ user, error, values, csrf }) {
   });
 }
 
-// The bar is drawn from the job as it stands, so a reload mid-copy is right and
-// a copy that finished before the page was asked for shows its link at once.
-// public/app.js then follows the status, which is the same job read again.
-function importPage({ user, job, statusUrl }) {
-  const base = `/${encodeURIComponent(job.owner)}/${encodeURIComponent(job.name)}`;
-  const percent = Math.max(0, Math.min(100, job.percent));
-  const moving = !job.reported;
-  const detail = job.detail ? ` <span class="muted small">${esc(job.detail)}</span>` : '';
 
-  return layout({
-    title: `Importing ${job.name}`,
-    user,
-    body: `<div class="narrow">
-  <h1>Importing ${esc(job.owner)}/${esc(job.name)}</h1>
-  <section class="panel" data-import-status="${esc(statusUrl)}">
-    <p class="muted">From <code>${esc(job.source)}</code></p>
-    <div class="import-bar" role="progressbar" aria-label="Import progress" aria-valuemin="0" aria-valuemax="100"${moving ? '' : ` aria-valuenow="${percent}"`}>
-      <div class="import-fill" data-import-bar style="width:${moving ? 30 : percent}%"${moving ? ' data-moving' : ''}></div>
-    </div>
-    <p class="import-line"><span data-import-phase>${esc(job.phase)}</span>${detail}</p>
-    ${
-      job.state === 'done'
-        ? `<div class="flash flash-ok">Imported. <a href="${base}">Open ${esc(job.name)}</a>.</div>`
-        : `<noscript><p class="muted small">This page does not update without JavaScript. Reload it to see where the copy has got.</p></noscript>`
-    }
-  </section>
-  <p><a class="linkish" href="/new">Start another import</a></p>
-</div>`,
-  });
-}
 
 function authPage({ mode, error, values, next, csrf }) {
   const isRegister = mode === 'register';
@@ -452,9 +424,8 @@ module.exports = {
   commitRow,
   blobTable,
   dashboard,
-  newRepoPage,
-  importPage,
-  authPage,
+newRepoPage,
+authPage,
   profilePage,
   notFoundPage,
 };

@@ -210,12 +210,13 @@
   }
 
   // The number on the bar is git's own, read back out of the job, so there is
-  // nothing here to guess. A copy that has finished or failed is a different
-  // page, which is what the browser navigates to.
+  // nothing here to guess. Done and failed both reload the same page, which is
+  // what turns the panel into a file list or a finished repository.
   function followImport(panel) {
     var statusUrl = panel.getAttribute('data-import-status');
     var fill = panel.querySelector('[data-import-bar]');
     var phase = panel.querySelector('[data-import-phase]');
+    var elapsed = panel.querySelector('[data-import-elapsed]');
     var unreachable = 0;
 
     function paint(job) {
@@ -224,8 +225,12 @@
         fill.removeAttribute('data-moving');
         fill.parentNode.setAttribute('aria-valuenow', job.percent);
       }
-      phase.textContent = job.phase;
-      if (job.detail) phase.appendChild(document.createTextNode(' ' + job.detail));
+      if (phase) phase.textContent = job.phase;
+      if (job.detail && phase) phase.appendChild(document.createTextNode(' ' + job.detail));
+      if (elapsed) {
+        var seconds = job.seconds;
+        elapsed.textContent = (seconds < 60 ? seconds + 's' : Math.floor(seconds / 60) + 'm ' + (seconds % 60) + 's') + ' elapsed.';
+      }
     }
 
     function ask() {
@@ -235,17 +240,17 @@
         })
         .then(function (job) {
           unreachable = 0;
-          // Gone, finished and failed all have somewhere else to be read; assigning is
-          // what lands the browser there.
-          if (job && job.state !== 'running') {
-            window.location.assign(job.location);
+          // idle, done and failed all mean the copy is not running, and the page
+          // they reload into is the one that says so.
+          if (job && job.state !== 'running' && job.state !== 'queued') {
+            window.location.reload();
             return;
           }
           if (job) paint(job);
         })
         .catch(function () {
           unreachable += 1;
-          if (unreachable >= 5) phase.textContent = 'Lost contact with the server, still retrying.';
+          if (unreachable >= 5 && phase) phase.textContent = 'Lost contact with the server, still retrying.';
         })
         .then(function () {
           window.setTimeout(ask, 1000);
