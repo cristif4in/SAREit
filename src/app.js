@@ -230,19 +230,13 @@ function isGitPath(segments) {
   return hook === 'git-upload-pack' || hook === 'git-receive-pack' || (hook === 'info' && segments[3] === 'refs');
 }
 
-// Times the request from the first byte of the response to the last, and counts
-// the bytes on the way out. The clock starts here rather than after the body is
-// read so a large git push shows what the client actually waited for.
+// The clock starts before the body is read, so a large push shows what the
+// client actually waited for. end and write are both wrapped because a response
+// can finish through either, and a 304 writes nothing.
 //
-// end and write are wrapped because a response can finish through either and a
-// HEAD or a 304 writes nothing, which would otherwise be counted as a zero byte
-// response rather than as no body at all.
-//
-// settled guards the counter. A handler that ends a response and then throws
-// reaches the catch in createApp, which ends it a second time, and without the
-// guard that one request would decrement inflight twice and leave it climbing
-// for the life of the process. A client that walks away mid-transfer never
-// calls end at all, so close decrements it instead.
+// settled exists because a handler that ends a response and then throws reaches
+// the catch below and ends it again, which would decrement inflight twice and
+// leave it climbing for the life of the process.
 function measureResponse(req, res) {
   const startedAt = debug.started();
   let bytes = 0;

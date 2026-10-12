@@ -1,4 +1,8 @@
-// Debug overlay
+// Counters for the debug overlay: response time, requests in flight, bytes out.
+//
+// Every request is measured whether or not the overlay is switched on, because
+// a measurement that began when it was switched on would have nothing to report
+// for the request that switched it on.
 
 const counts = { inflight: 0, bytes: 0, requests: 0, lastMs: 0 };
 

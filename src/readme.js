@@ -1,4 +1,14 @@
-// README rendering
+// README rendering: a markdown subset to HTML, for the file list on a code page.
+//
+// Content here is whatever whoever pushed the commit chose, so no input reaches
+// the page as markup. Text is escaped and the only tags in the output are the
+// ones written below, which means a README cannot inject a script or a style
+// even though the Content-Security-Policy would refuse most of them anyway.
+//
+// Covers the part of markdown READMEs actually use. Not implemented: setext
+// headings, nested blockquotes, HTML blocks, reference links, footnotes. Escaped
+// raw HTML shows as the text it was, which is what a <div> inside a code fence
+// should do anyway.
 
 const CODE_EXT = {
   js: 'javascript', mjs: 'javascript', cjs: 'javascript', ts: 'typescript', tsx: 'typescript',
@@ -16,7 +26,8 @@ function esc(value) {
   return String(value ?? '').replace(/[&<>"']/g, (char) => ESCAPES[char]);
 }
 
-// A path from a README into the repository is a link to a blob on this server
+// Relative targets are resolved into the repository rather than left alone, so
+// a README link is a link on this server and nowhere else.
 function resolveHref(url, resolve) {
   const trimmed = url.trim();
   if (!trimmed || trimmed.startsWith('#')) return { href: trimmed, external: false };
@@ -28,11 +39,8 @@ function resolveHref(url, resolve) {
   return { href: resolve(collapse(trimmed)), external: false };
 }
 
-// "." and ".." are collapsed here rather than left for the browser, because the
-// result becomes part of a path this server turns into a blob lookup, and a
-// leading "../.." in there is exactly what must not survive. A percent sign
-// that is not valid encoding makes the whole path unusable, so it yields
-// nothing instead of throwing inside a page render.
+// A leading "../.." is collapsed here rather than left for the browser, because
+// the result becomes part of a path this server turns into a blob lookup.
 function collapse(target) {
   let text;
   try {
@@ -58,12 +66,9 @@ function linkAttrs(href, external) {
   return external ? ` href="${esc(href)}" target="_blank" rel="noopener noreferrer"` : ` href="${esc(href)}"`;
 }
 
-// Raw HTML is normally escaped, which is right for a <div> someone wrote as
-// prose but wrong for a README pasted off github.com, where an image pasted as
-// <img src=...> is how images actually arrive. So a small set of tags is parsed
-// and re-emitted from the attributes read here rather than passed through:
-// every other tag, every attribute outside the list, and every url that is not
-// http(s) or a repository path is dropped.
+// These tags are re-emitted from the attributes read here rather than passed
+// through. Escaping raw HTML outright would be wrong for a README pasted off
+// github.com, where an image arrives as an <img> tag rather than as markdown.
 const ALLOWED_TAGS = new Set(['img', 'a', 'b', 'i', 'em', 'strong', 'br', 'p', 'div', 'span', 'details', 'summary']);
 const ALLOWED_ATTRS = {
   img: ['src', 'alt', 'width', 'height', 'title', 'align'],
@@ -81,9 +86,8 @@ function filterUrl(url, resolve) {
   return resolve ? resolve(collapse(trimmed)) : '';
 }
 
-// Rebuilds one allowed tag from its source text. Anything unrecognised in the
-// attribute soup, including on*, style, srcset and formaction, is simply not
-// copied, so it cannot reach the page.
+// Everything not named in the attribute lists is dropped, which is what keeps
+// onerror, style, srcset and formaction out rather than filtering them by name.
 function sanitizeTag(source, resolve) {
   const name = source.match(/^<\s*([a-z][a-z0-9]*)/i);
   if (!name || !ALLOWED_TAGS.has(name[1].toLowerCase())) return null;
@@ -111,9 +115,8 @@ function sanitizeTag(source, resolve) {
   return `<${tag}${out.length ? ' ' + out.join(' ') : ''}>${closing}`;
 }
 
-// One tag of raw HTML, re-emitted from the attributes read here. A tag that is
-// not on the list comes back as escaped text, so a <script> in a README stays
-// visible as the text it was rather than disappearing.
+// A tag that is not on the list comes back as escaped text, so a <script> in a
+// README stays visible as the text it was rather than disappearing.
 function allowHtml(source, resolve) {
   const name = source.match(/^<\s*\/?\s*([a-z][a-z0-9]*)/i);
   if (!name || !ALLOWED_TAGS.has(name[1].toLowerCase())) return esc(source);
@@ -121,9 +124,7 @@ function allowHtml(source, resolve) {
   return sanitizeTag(source, resolve) || esc(source);
 }
 
-// Inline spans. The output is built from escaped pieces, so the only markup is
-// what these produce. Emphasis and links are handled in one pass because a
-// marker inside a link label has to stay inside it.
+// One pass, because a marker inside a link label has to stay inside it.
 function inline(text, resolve) {
   const out = [];
   let buffer = '';
@@ -287,7 +288,7 @@ function splitRow(line) {
   return cells;
 }
 
-// The header underline is |---|:--:|---: and its colons carry the alignment.
+// The colons in the header underline carry the alignment.
 function tableAlign(line) {
   return splitRow(line).map((cell) => {
     const left = cell.startsWith(':');
@@ -309,9 +310,8 @@ function list(lines, resolve, startIndex) {
     const line = lines[index];
     const bullet = ordered ? /^\s*\d+[.)]\s+(.*)$/.exec(line) : /^\s*[-*+]\s+(.*)$/.exec(line);
     if (!bullet) {
-      // A bullet of the other kind starts a list of its own, and anything else
-      // ends this one. Without the break here a task list swallows every
-      // following bullet as a continuation of its last item.
+      // Without this break a task list swallows every following bullet as a
+      // continuation of its last item.
       if (LIST.test(line)) break;
       if (!/^\s{2,}\S/.test(line)) break;
     }
@@ -427,8 +427,8 @@ function blocks(text, resolve) {
       continue;
     }
 
-    // A table needs a header row and a divider under it; without the divider
-    // these are two paragraphs that happen to contain pipes.
+    // The table needs its divider row, or these are two paragraphs that happen to
+    // contain pipes.
     if (line.includes('|') && index + 1 < lines.length && isTableDivider(lines[index + 1])) {
       const alignments = tableAlign(lines[index + 1]);
       const header = splitRow(line).map((cell, column) => `<th${alignments[column] || ''}>${inline(cell, resolve)}</th>`).join('');
@@ -472,9 +472,8 @@ function isBlockStart(line) {
   );
 }
 
-// Headers are turned into ids so a README that links to its own section works.
-// The slug is the plain text of the header, lowercased with the punctuation
-// dropped, which is what the anchors in most READMEs already look like.
+// Plain text, lowercased and hyphenated, which is the shape the section
+// anchors in most READMEs already use.
 function slug(text) {
   return text
     .toLowerCase()
@@ -484,10 +483,8 @@ function slug(text) {
     .replace(/\s+/g, '-');
 }
 
-// The document is rendered twice: once to collect the header ids, then again
-// with those ids available so a link to a section can be rewritten onto them.
-// Doing it in one pass would mean the ids were not all known when the first
-// link was met.
+// Rendered twice, because the ids are not all known when the first link to one
+// is met and a single pass would have to invent them as it went.
 function render(markdown, { resolvePath } = {}) {
   const resolve = resolvePath || (() => '');
   let body = blocks(markdown, resolve);

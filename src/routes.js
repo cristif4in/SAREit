@@ -394,10 +394,9 @@ async function newRepoRoute(req, res, viewer) {
   return undefined;
 }
 
-// The page the import form redirects to, and the status it polls. A failed copy
-// is rendered as the new repository page again, with the values the job was
-// started from, so a URL that turned out to be wrong does not have to be typed
-// a second time.
+// A failed copy is rendered as the new repository page again, with the values
+// the job was started from, so a URL that turned out to be wrong does not have
+// to be typed a second time.
 function importJobRoute(req, res, viewer, segments) {
   if (req.method !== 'GET') {
     res.writeHead(405, { Allow: 'GET', 'Content-Length': 0 });
@@ -409,15 +408,17 @@ function importJobRoute(req, res, viewer, segments) {
   const page = `/new/import/${segments[2]}`;
 
   if (!job) {
-    // The poll asks for a job that was there when the page was rendered and is
-    // gone now, either swept or lost to a restart
+    // The poll is for a job that existed when the page was rendered and is gone
+    // now, swept or lost to a restart. Answered as a job that ended rather than
+    // an error, so the poll can follow the location back to the explanation.
     if (segments[3]) return json(res, 200, { state: 'forgotten', location: page });
     html(res, 404, views.notFoundPage({ user: viewer, what: 'That import is not being tracked. A restart drops the ones still running.' }));
     return undefined;
   }
 
-
-  // complete.
+  // Status before the failure page: the poll has to keep getting JSON once the
+  // copy has failed, and HTML there is what would leave the bar crawling
+  // against a parse it can never complete.
   if (segments[3]) {
     json(res, 200, {
       state: job.state,

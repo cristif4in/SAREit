@@ -100,20 +100,40 @@
     var importer = document.querySelector('[data-import-status]');
     if (importer) followImport(importer);
 
-    // The choice survives a navigation, because a host switching the overlay on
-    // and then clicking through the site to look at it should not have to run
-    // the command again on every page. Scope is the tab, not the browser.
-    if (sessionDebug() === 'on') window.debugenable();
+    // Caught on submit rather than on input, so the command never becomes a query
+    // string and never reaches the catalog search.
+    var search = document.querySelector('form.search');
+    if (search) {
+      search.addEventListener('submit', function (event) {
+        var field = search.querySelector('input[name="q"]');
+        var typed = field.value.trim().toLowerCase();
+        if (typed !== DEBUG_ON && typed !== DEBUG_OFF) return;
+        event.preventDefault();
+        field.value = '';
+        if (typed === DEBUG_ON) showDebug();
+        else hideDebug();
+      });
+    }
+
+    if (sessionDebug() === 'on') showDebug();
   });
 
-  // Live counters for the host. Off until debugenable is run in the console,
-  // which is a real function on window rather than a script the page writes into
-  // itself: the Content-Security-Policy forbids inline script, and a snippet
-  // that rewrites the document to install itself is not something a git host
-  // should hand to anyone who loads a page.
+  // Live counters for the host, switched on by typing //debugEnable into the
+  // search box. Nothing global is defined for it, so it is not reachable from
+  // the console or from a script on the page.
+  var DEBUG_ON = '//debugenable';
+  var DEBUG_OFF = '//debugdisable';
   var DEBUG_KEY = 'sareit-debug';
   var debugTimer = null;
   var debugBaseline = 0;
+
+  // Only web storage survives a page load, so that is what carries the choice
+  // across a navigation. It also survives a reload, which is not wanted here, so
+  // a reload clears it. Back and Forward are not reloads and keep it.
+  var RELOADED = (function () {
+    var entries = performance.getEntriesByType ? performance.getEntriesByType('navigation') : [];
+    return entries.length > 0 && entries[0].type === 'reload';
+  })();
 
   function sessionDebug() {
     try {
@@ -130,6 +150,8 @@
       // Storage unavailable: the overlay still works, it just resets on reload.
     }
   }
+
+  if (RELOADED) rememberDebug('off');
 
   function formatBytes(bytes) {
     if (bytes < 1024) return bytes + 'B';
@@ -160,9 +182,9 @@
       });
   }
 
-  window.debugenable = function () {
+  function showDebug() {
     var panel = document.getElementById('Debug');
-    if (!panel) return 'no overlay on this page';
+    if (!panel) return;
     rememberDebug('on');
     window.clearInterval(debugTimer);
     debugTimer = window.setInterval(poll, 500);
@@ -177,23 +199,19 @@
         panel.hidden = false;
         paint(state);
       });
-    return 'debug on: last response time, requests in flight, bytes served';
-  };
+  }
 
-  window.debugdisable = function () {
+  function hideDebug() {
     rememberDebug('off');
     window.clearInterval(debugTimer);
     debugTimer = null;
     var panel = document.getElementById('Debug');
     if (panel) panel.hidden = true;
-    return 'debug off';
-  };
+  }
 
-  // The import page follows the copy the server is running. The number on the
-  // bar is git's own, read back out of the job, so there is nothing here to
-  // guess: a clone that reports no percentage leaves the bar crawling, and a
-  // copy that has finished or failed is a different page, which is what the
-  // browser navigates to.
+  // The number on the bar is git's own, read back out of the job, so there is
+  // nothing here to guess. A copy that has finished or failed is a different
+  // page, which is what the browser navigates to.
   function followImport(panel) {
     var statusUrl = panel.getAttribute('data-import-status');
     var fill = panel.querySelector('[data-import-bar]');
@@ -217,8 +235,8 @@
         })
         .then(function (job) {
           unreachable = 0;
-          // A job that is gone, finished or failed all have somewhere else to
-          // be read. Assigning is what lands the browser there.
+          // Gone, finished and failed all have somewhere else to be read; assigning is
+          // what lands the browser there.
           if (job && job.state !== 'running') {
             window.location.assign(job.location);
             return;

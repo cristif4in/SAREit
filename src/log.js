@@ -1,4 +1,8 @@
-// Console output for host.
+// Console output for the host: timestamp, level, event, then key=value fields,
+// so a running instance can be read with grep rather than by eye.
+//
+// info is routine and goes to stdout; the rest goes to stderr, so a supervisor
+// collecting only stderr has the problems and not the running commentary.
 
 const NAME = 'SAREit';
 

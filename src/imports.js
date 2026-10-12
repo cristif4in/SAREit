@@ -1,17 +1,11 @@
 // Importing a remote into an account, as a job that outlives the request.
 //
-// git clone of a large project runs for minutes. Holding an HTTP request open
-// for that long tells the person waiting nothing at all, so the request that
-// starts the copy returns at once with a job id and the page polls the job.
+// git clone --progress writes its phase percentages to stderr, and those are
+// what the page's progress bar is made of. A clone that reports none, which is
+// what a copy from a local directory looks like, leaves the bar indeterminate.
 //
-// Progress comes out of git itself: clone --progress writes the phase
-// percentages to stderr, which is read here and folded into the one number the
-// bar shows. A clone that reports nothing, which is what a copy from a local
-// directory looks like, leaves the bar indeterminate rather than inventing a
-// figure for it.
-//
-// The job table is in memory. A restart loses it, and the page reports that
-// instead of waiting on a copy that is no longer running.
+// The job table is in memory: a restart loses it, and the page reports that
+// rather than waiting on a copy that is no longer running.
 
 const fs = require('fs');
 const path = require('path');
@@ -34,10 +28,9 @@ const JOB_TTL_MS = 10 * 60 * 1000;
 // one.
 const MAX_JOBS = 64;
 
-// git reports a percentage per phase and never one for the whole clone. The
+// git reports a percentage per phase and never one for the whole clone, and the
 // bar is a single number, so the phases get shares of it: receiving the objects
-// is the transfer itself, while enumerating them and resolving the deltas sit
-// at either end of it and finish quickly.
+// is the transfer, the other two sit at either end and finish quickly.
 const PHASE_BAND = {
   counting: [0, 15],
   receiving: [15, 90],
@@ -87,8 +80,8 @@ function validSource(source) {
   }
 }
 
-// The page is the only reader, and it belongs to whoever started the copy. A
-// job that is not the viewer's is not found whether or not it exists.
+// A job that is not the viewer's reads as nonexistent, so an id belonging to
+// another account cannot be probed by the difference.
 function find(id, login) {
   const job = jobs.get(String(id));
   if (!job || !login) return null;
@@ -134,11 +127,9 @@ function start({ owner, name, description, isPrivate, source, typed = source }) 
   return job;
 }
 
-// git clone --bare is what keeps an imported project intact: it copies the
-// objects and refs as they are, so commit messages, authors, dates, tags and
-// notes come across exactly as the origin platform recorded them. Nothing
-// afterwards rewrites them, so a normal clone of the result reproduces the
-// original history.
+// git clone --bare copies objects and refs as they are, so messages, authors,
+// dates, tags and notes survive the move untouched and a clone of the result
+// reproduces the original history.
 function run(job) {
   const dir = storage.repoDir(job.owner, job.name);
   fs.mkdirSync(path.dirname(dir), { recursive: true });
@@ -157,9 +148,8 @@ function run(job) {
   }, CLONE_TIMEOUT_MS);
 
   child.stderr.on('data', (chunk) => readProgress(job, chunk));
-  // A spawn that never started emits both of these, so the first one to land
-  // settles the job and the other is ignored. Without that the second run of
-  // fail replaces the real reason with an exit code that says nothing.
+  // A spawn that never started emits both of these, so the first to land settles
+  // the job; otherwise the second replaces the real reason with an exit code.
   let settled = false;
   const done = (reason) => {
     if (settled) return;
@@ -181,8 +171,6 @@ function run(job) {
   });
 }
 
-// The clone wrote the objects; now the row that makes them a repository, which
-// is also the point where the storage budget is checked.
 function adopt(job, dir) {
   try {
     const headRef = repo.headRef(dir);
@@ -229,10 +217,9 @@ function fail(job, dir, reason) {
   security.audit('import failed', { login: job.owner, from: job.source, reason });
 }
 
-// git --progress rewrites the line it is on with a bare carriage return and
-// ends it with a newline, so both have to split. Splitting on newlines alone
-// collapses a whole run of updates into one line and parses only the first of
-// them. Whatever the last chunk cut in half is held until the next one arrives.
+// git --progress separates its updates with a bare carriage return and ends the
+// last with a newline, so both have to split: newlines alone collapse a run of
+// updates into one line and parse only the first of them.
 function readProgress(job, chunk) {
   job.pending += chunk.toString('utf8');
   const lines = job.pending.split(/\r\n|\r|\n/);
@@ -244,8 +231,8 @@ function readProgress(job, chunk) {
   if (job.tail.length > 3) job.tail.shift();
 }
 
-// Returns true when the line was progress, so that a line that is not is kept
-// as the reason the clone failed.
+// A line that is progress updates the job; one that is not is kept, because the
+// reason a clone failed is the only line in its output that says so.
 function applyLine(job, line) {
   for (const phase of PHASES) {
     const hit = phase.seen.exec(line);

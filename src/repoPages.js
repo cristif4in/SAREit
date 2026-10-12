@@ -20,9 +20,8 @@ const diff = require('./git/diff');
 const readme = require('./readme');
 const { MAX_REPO_BYTES, MAX_ACCOUNT_BYTES } = require('./config');
 
-// Past this the README is shown as a link instead of rendered. A render walks
-// every line and a repository can hold a file of any size, so the ceiling is
-// what keeps a page render from becoming an afternoon.
+// A render walks every line and a repository can hold a file of any size, so
+// the ceiling is what keeps a page render from becoming an afternoon.
 const README_RENDER_BYTES = 512 * 1024;
 
 const RAW_PREVIEW_BYTES = 512 * 1024;
@@ -82,10 +81,8 @@ function withSidebar({ record, viewer, active, ref, branches, tags, sizeBytes, a
 </div>`;
 }
 
-// A README image is written relative to the file it sits in, so the path in the
-// markdown is resolved against the directory the README lives in and pointed at
-// the blob that serves it. An absolute URL is left alone and the browser fetches
-// it from wherever it lives.
+// Relative to the README's own directory, pointed at the blob that serves it.
+// An absolute URL is left for the browser to fetch wherever it lives.
 function readmeResolver(base, ref, pathSegments) {
   return (target) => {
     const segments = target.split('/').filter(Boolean);
@@ -102,8 +99,8 @@ function readmeResolver(base, ref, pathSegments) {
   };
 }
 
-// A README that is not markdown is shown as a link rather than run through the
-// renderer, since a plain README.txt is text and this is a markdown viewer.
+// A plain README.txt is text, and this is a markdown viewer, so it is linked
+// rather than rendered.
 function readmeBlock({ record, resolvedRef, pathSegments, readmeFile, readmeBody }) {
   const base = baseHref(record);
   const link = `${base}/blob/${hrefPath([resolvedRef, ...pathSegments, readmeFile])}`;

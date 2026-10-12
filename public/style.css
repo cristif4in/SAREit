@@ -886,9 +886,9 @@ select:focus {
   background: var(--subtle);
 }
 
-/* The debug overlay, hidden until debugenable is run in the console. It sits
-   over the masthead, so it takes no pointer events: otherwise it would swallow
-   clicks meant for whatever is under it. */
+/* The debug overlay, hidden until //debugEnable is typed into the search box.
+   It sits over the masthead, so it takes no pointer events: otherwise it would
+   swallow clicks meant for whatever is under it. */
 #Debug {
   position: fixed;
   top: 10px;
@@ -1191,7 +1191,7 @@ tr.gap td {
 }
 
 /* 233% is the track: the fill is 30% wide, so moving it by three and a bit
-   times its own width takes it from the left edge to past the right one. */
+   times its own width carries it from the left edge to past the right one. */
 @keyframes import-crawl {
   from {
     margin-left: 0;
