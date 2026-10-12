@@ -97,6 +97,17 @@
       });
     }
 
+    // A copy button next to a value, one per value. The clipboard API is only
+    // available over https or on localhost, and this platform is usually served
+    // on plain http, so a selection-based fallback is the normal path rather
+    // than the exception.
+    var copyables = document.querySelectorAll('[data-copy]');
+    for (var m = 0; m < copyables.length; m++) {
+      copyables[m].addEventListener('click', function () {
+        copyValue(this.getAttribute('data-copy'), this);
+      });
+    }
+
     var importer = document.querySelector('[data-import-status]');
     if (importer) followImport(importer);
 
@@ -209,7 +220,51 @@
     if (panel) panel.hidden = true;
   }
 
-  // The number on the bar is git's own, read back out of the job, so there is
+  function copied(button, ok) {
+    var was = button.textContent;
+    button.textContent = ok ? 'Copied' : 'Press Ctrl+C';
+    button.classList.toggle('copy-done', ok);
+    window.setTimeout(function () {
+      button.textContent = was;
+      button.classList.remove('copy-done');
+    }, 1500);
+  }
+
+  function copyValue(text, button) {
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(
+        function () { copied(button, true); },
+        function () { copied(button, selectAndCopy(text)); }
+      );
+      return;
+    }
+    copied(button, selectAndCopy(text));
+  }
+
+  // The old way: put the text in a selection and ask the document to copy it.
+  // The textarea is off-screen rather than hidden because a display:none element
+  // cannot be selected, which is what makes this fail on the browsers that still
+  // need it.
+  function selectAndCopy(text) {
+    var field = document.createElement('textarea');
+    field.value = text;
+    field.setAttribute('readonly', '');
+    field.style.position = 'fixed';
+    field.style.top = '-1000px';
+    field.style.opacity = '0';
+    document.body.appendChild(field);
+    field.select();
+    var ok = false;
+    try {
+      ok = document.execCommand('copy');
+    } catch (err) {
+      ok = false;
+    }
+    document.body.removeChild(field);
+    return ok;
+  }
+
+// The number on the bar is git's own, read back out of the job, so there is
   // nothing here to guess. Done and failed both reload the same page, which is
   // what turns the panel into a file list or a finished repository.
   function followImport(panel) {

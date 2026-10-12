@@ -1153,6 +1153,47 @@ tr.gap td {
   padding: 5px 8px;
 }
 
+.copy-btn {
+  flex: none;
+  font-size: 11px;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--subtle);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.copy-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.copy-done {
+  border-color: var(--add-line);
+  color: var(--success);
+}
+
+.clone {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.clone-cmd {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 6px 0 10px;
+}
+
+.clone-cmd code {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+
 .gauge {
   height: 6px;
   border-radius: 3px;

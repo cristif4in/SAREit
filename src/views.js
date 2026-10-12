@@ -144,8 +144,13 @@ function repoSidebar({ repo, sizeBytes, accountBytes, cloneUrl, defaultBranch, i
   <h2>Clone</h2>
   <div class="clone">
     <input type="text" readonly value="${esc(cloneUrl)}" aria-label="Clone URL" data-select-on-click>
+    <button class="copy-btn" type="button" data-copy="${esc(cloneUrl)}" aria-label="Copy clone URL">Copy</button>
   </div>
-  <p class="muted small">git clone ${esc(cloneUrl)}</p>
+  <p class="clone-cmd">
+    <code>git clone ${esc(cloneUrl)}</code>
+    <button class="copy-btn" type="button" data-copy="git clone ${esc(cloneUrl)}" aria-label="Copy clone command">Copy</button>
+  </p>
+  <p class="muted small"><a href="/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}/archive/${hrefPath([defaultBranch])}.zip">Download .zip</a></p>
   ${gauge(sizeBytes, MAX_REPO_BYTES, 'Repository')}
   ${gauge(accountBytes, MAX_ACCOUNT_BYTES, 'Account total')}
 </aside>`;

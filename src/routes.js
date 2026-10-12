@@ -9,6 +9,7 @@ const storage = require('./storage');
 const auth = require('./auth');
 const security = require('./security');
 const imports = require('./imports');
+const zipmod = require('./zip');
 const debug = require('./debug');
 const log = require('./log');
 const repo = require('./git/repo');
@@ -158,6 +159,17 @@ async function handleWeb(req, res, segments, url) {
   if (section === 'tags') return tagsRoute(req, res, record, dir, viewer);
   if (section === 'commit' && segments.length === 4) return commitRoute(req, res, record, dir, viewer, segments[3]);
   if (section === 'raw') return rawRoute(res, dir, segments.slice(3));
+
+  // The zip names its own ref, so it is matched before the generic split: a ref
+  // containing a slash would otherwise be cut in half looking for the .zip.
+  if (section === 'archive') {
+    const zipName = segments.slice(3).join('/');
+    if (!zipName.endsWith('.zip')) {
+      html(res, 404, views.notFoundPage({ user: viewer, what: 'No such revision does not exist.' }));
+      return undefined;
+    }
+    return archiveRoute(res, record, dir, zipName.slice(0, -4));
+  }
 
   const split = splitRefAndPath(dir, segments.slice(3));
   if (!split) {
@@ -630,6 +642,78 @@ const CONTENT_TYPES = {
   md: 'text/plain; charset=utf-8',
   xml: 'application/xml',
 };
+
+// The whole tree at one ref, zipped, without a git client. The walk is
+// iterative and holds one entry per level rather than the whole listing, and the
+// archive is streamed, so the peak is one blob.
+function archiveRoute(res, record, dir, rev) {
+  const sha = repo.resolveRevision(dir, rev);
+  const commit = sha ? commitOfRef(dir, rev) : null;
+  if (!commit) {
+    plain(res, 404, 'Not found\n');
+    return;
+  }
+
+  // The name the archive is saved under. A branch name can carry slashes, which
+  // are not legal in a filename, so they become dashes.
+  const label = `${record.name}-${rev === 'HEAD' ? repo.defaultBranch(dir).slice('refs/heads/'.length) : rev}`
+    .replace(/[\\/]+/g, '-')
+    .replace(/[^A-Za-z0-9._-]/g, '-')
+    .slice(0, 96);
+
+  res.writeHead(200, {
+    'Content-Type': 'application/zip',
+    // No Content-Length: the archive is built on the way out and its size is not
+    // known until the walk has finished.
+    'Content-Disposition': `attachment; filename="${label}.zip"`,
+    'Cache-Control': 'no-store',
+  });
+
+  const zip = new zipmod.ZipWriter(res, label);
+  const startedAt = commit.committer.when || Date.now();
+
+  // Entries are added breadth-first so a file inside a deep directory still
+  // appears near its parent rather than after the whole subtree.
+  const pending = [{ sha: commit.tree, prefix: '' }];
+  const visited = new Set();
+
+  const pump = () => {
+    while (pending.length) {
+      const current = pending.shift();
+      if (visited.has(current.sha)) continue;
+      visited.add(current.sha);
+
+      const obj = repo.readObject(dir, current.sha);
+      if (!obj || obj.type !== 'tree') continue;
+
+      for (const entry of objects.parseTree(obj.body)) {
+        const name = `${current.prefix}${entry.name}`;
+        if (entry.mode === '40000' || entry.mode === '040000') {
+          pending.push({ sha: entry.sha, prefix: `${name}/` });
+          continue;
+        }
+        // A submodule entry names a commit in another repository, which is not
+        // anything that can be fetched from here, so it is left out.
+        if (entry.mode === '160000') continue;
+
+        const blob = repo.readObject(dir, entry.sha);
+        if (!blob || blob.type !== 'blob') continue;
+        zip.addFile(name, blob.body, startedAt);
+      }
+
+      // Yield between levels: a repository with a wide root has thousands of
+      // entries and holding the loop for all of them is the hang this route
+      // exists to avoid.
+      if (pending.length && pending.length % 200 === 0) {
+        setImmediate(pump);
+        return;
+      }
+    }
+    zip.close();
+  };
+
+  pump();
+}
 
 function contentTypeFor(name) {
   const ext = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1).toLowerCase() : '';
