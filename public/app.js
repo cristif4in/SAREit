@@ -1,10 +1,6 @@
 // Behaviours that used to be inline handlers, kept in a file rather than in
 // the markup so the Content-Security-Policy can forbid inline script.
-//
-// The theme is applied before the rest of the page is parsed so a reader who
-// chose light never sees a dark flash first. The stylesheet defaults to dark,
-// so the only thing this has to do is add data-theme="light" when that is what
-// was chosen.
+
 
 (function () {
   'use strict';

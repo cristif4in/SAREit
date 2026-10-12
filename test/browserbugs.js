@@ -8,7 +8,8 @@
 
 const http = require('http');
 
-const BASE = process.env.BASE || 'http://127.0.0.1:11707';
+const BASE = process.env.BASE || 'http://127.0.0.1:11707';  // Doesn't affect the host if you use domains or smth
+
 const results = [];
 
 function check(name, ok, detail = '') {
