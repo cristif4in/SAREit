@@ -1,5 +1,8 @@
 ## SAREit
 
+<img width="1320" height="478" alt="image" src="https://github.com/user-attachments/assets/174afa2e-1b17-40e8-b695-c9af9b77a196" />
+
+(ignore the gta link)
 What is this:
 SAREit is a lightweight from 0, git platform that supports actual git commands to be ran and all, hostable even on http://127.0.0.1/ for example.
 Backend is Node.js, using SQLite as it's primary database for repos/accounts as of now.
