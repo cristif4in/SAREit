@@ -17,6 +17,7 @@ const crypto = require('crypto');
 const { openDatabase } = require('./sqlite');
 const { ACCOUNTS_DIR, DATA_DIR, MAX_REPO_BYTES } = require('./config');
 const accounts = require('./accounts');
+const log = require('./log');
 
 const CATALOG_FILE = path.join(DATA_DIR, 'catalog.sqlite');
 
@@ -176,7 +177,7 @@ function refreshSizeInBackground(owner, name, measure) {
     try {
       storeSize(owner, name, measure());
     } catch (err) {
-      console.error(`SAREit could not record the size of ${token}: ${err.message}`);
+      log.error('size record failed', { repo: token, reason: err.message });
     } finally {
       refreshing.delete(token);
     }
@@ -221,7 +222,7 @@ function rebuildIfStale() {
       try {
         repos = accounts.listRepos(login);
       } catch (err) {
-        console.error(`SAREit catalog skipped "${login}": ${err.message}`);
+        log.error('catalog skipped account', { login, reason: err.message });
         continue;
       }
       for (const repo of repos) {

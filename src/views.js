@@ -314,10 +314,41 @@ function newRepoPage({ user, error, values, csrf }) {
       <label class="check"><input type="checkbox" name="private" value="1"${values.private ? ' checked' : ''}> Private repository</label>
       <div class="actions">
         <button class="btn" type="submit">Import</button>
-        <span class="muted small">The request stays open until the copy finishes.</span>
+        <span class="muted small">The copy runs on the server and the next page shows how far it has got.</span>
       </div>
     </form>
   </section>
+</div>`,
+  });
+}
+
+// The bar is drawn from the job as it stands, so a reload mid-copy is right and
+// a copy that finished before the page was asked for shows its link at once.
+// public/app.js then follows the status, which is the same job read again.
+function importPage({ user, job, statusUrl }) {
+  const base = `/${encodeURIComponent(job.owner)}/${encodeURIComponent(job.name)}`;
+  const percent = Math.max(0, Math.min(100, job.percent));
+  const moving = !job.reported;
+  const detail = job.detail ? ` <span class="muted small">${esc(job.detail)}</span>` : '';
+
+  return layout({
+    title: `Importing ${job.name}`,
+    user,
+    body: `<div class="narrow">
+  <h1>Importing ${esc(job.owner)}/${esc(job.name)}</h1>
+  <section class="panel" data-import-status="${esc(statusUrl)}">
+    <p class="muted">From <code>${esc(job.source)}</code></p>
+    <div class="import-bar" role="progressbar" aria-label="Import progress" aria-valuemin="0" aria-valuemax="100"${moving ? '' : ` aria-valuenow="${percent}"`}>
+      <div class="import-fill" data-import-bar style="width:${moving ? 30 : percent}%"${moving ? ' data-moving' : ''}></div>
+    </div>
+    <p class="import-line"><span data-import-phase>${esc(job.phase)}</span>${detail}</p>
+    ${
+      job.state === 'done'
+        ? `<div class="flash flash-ok">Imported. <a href="${base}">Open ${esc(job.name)}</a>.</div>`
+        : `<noscript><p class="muted small">This page does not update without JavaScript. Reload it to see where the copy has got.</p></noscript>`
+    }
+  </section>
+  <p><a class="linkish" href="/new">Start another import</a></p>
 </div>`,
   });
 }
@@ -420,6 +451,7 @@ module.exports = {
   blobTable,
   dashboard,
   newRepoPage,
+  importPage,
   authPage,
   profilePage,
   notFoundPage,

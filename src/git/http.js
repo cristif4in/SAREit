@@ -8,6 +8,7 @@ const auth = require('../auth');
 const accounts = require('../accounts');
 const security = require('../security');
 const storage = require('../storage');
+const log = require('../log');
 const repo = require('./repo');
 const pkt = require('./pkt');
 const { ZERO_SHA, MAX_PUSH_BYTES, MAX_REPO_BYTES, DATA_DIR } = require('../config');
@@ -96,7 +97,7 @@ const PACK_TEMP_DIR = path.join(DATA_DIR, 'tmp');
 // means modelling how the chunker splits every read. Being one byte out is a
 // client that waits forever on a body that has already ended, which is exactly
 // what a hung clone looks like. Chunked encoding has no such arithmetic.
-async function sendPack(res, preamble, pack, useSideband) {
+async function sendPack(res, preamble, pack, useSideband, repo) {
   const READ_CHUNK = 1 << 18;
   const SIDE = pkt.MAX_PAYLOAD - 1;
 
@@ -129,7 +130,7 @@ async function sendPack(res, preamble, pack, useSideband) {
     // A client that walks away mid-clone lands here. The connection is torn
     // down rather than closed cleanly, which is what git expects when a
     // transfer does not complete.
-    console.error(`SAREit pack transfer ended early: ${err.message}`);
+    log.warn('pack transfer ended early', { repo, reason: err.message });
     res.destroy();
   } finally {
     fs.closeSync(fd);
@@ -301,7 +302,7 @@ async function uploadPack(req, res, record) {
   try {
     pack = repo.packForFetch(dir, known, shared ? [shared] : [], PACK_TEMP_DIR);
   } catch (err) {
-    console.error(`SAREit could not build a pack for ${record.owner}/${record.name}: ${err.message}`);
+    log.error('pack build failed', { repo: repoLabel, reason: err.message });
     fail(res, 500, 'Could not build packfile');
     return;
   }
@@ -314,7 +315,8 @@ async function uploadPack(req, res, record) {
 
   // Streamed. The pack is already a file on disk from packForFetch, so
   // reading it back into one buffer would undo the point of writing it out.
-  await sendPack(res, Buffer.concat(chunks), pack, useSideband);
+  const repoLabel = `${record.owner}/${record.name}`;
+  await sendPack(res, Buffer.concat(chunks), pack, useSideband, repoLabel);
 }
 
 function applyCommand(dir, command, report, created, pusher) {
@@ -340,6 +342,7 @@ function applyCommand(dir, command, report, created, pusher) {
 }
 
 async function receivePack(req, res, record) {
+  const pushedAt = Date.now();
   const target = await loadTarget(req, res, record.owner, record.name, true);
   if (!target) return;
   const { dir } = target;
@@ -351,6 +354,7 @@ async function receivePack(req, res, record) {
     return;
   }
 
+  const repoLabel = `${record.owner}/${record.name}`;
   const { lines, pos } = pkt.readLines(body, 0);
   const commands = [];
   let clientCaps = [];
@@ -370,7 +374,7 @@ async function receivePack(req, res, record) {
   }));
 
   if (process.env.SAREIT_TRACE) {
-    console.log(`SAREit receive-pack request: ${commands.length} command(s), ${body.length - pos} pack bytes`);
+    log.info('receive-pack request', { repo: repoLabel, refs: commands.length, packBytes: body.length - pos });
   }
 
   let unpackStatus = 'unpack ok';
@@ -389,7 +393,7 @@ async function receivePack(req, res, record) {
       }).thin;
     } catch (err) {
       unpackStatus = `unpack ${err.message}`;
-      console.error(`SAREit unpack failed for ${record.owner}/${record.name}: ${err.message}`);
+      log.error('unpack failed', { repo: repoLabel, reason: err.message });
     }
   } else if (commands.some((command) => command.newSha !== ZERO_SHA)) {
     unpackStatus = 'unpack no pack received';
@@ -412,7 +416,7 @@ async function receivePack(req, res, record) {
         : branchesCreated.sort()[0];
       if (chosen) {
         repo.setHeadRef(dir, chosen);
-        console.log(`SAREit set ${record.owner}/${record.name} HEAD to ${chosen}`);
+        log.info('head set on first push', { repo: repoLabel, ref: chosen });
       }
     }
   } else {
@@ -437,9 +441,7 @@ async function receivePack(req, res, record) {
     ? Buffer.concat([pkt.sideband(1, framed), Buffer.from(pkt.FLUSH, 'ascii')])
     : framed;
 
-  console.log(
-    `SAREit push to ${record.owner}/${record.name}: ${commands.length} ref(s), ${unpackStatus}`
-  );
+  log.info('push', { repo: repoLabel, refs: commands.length, status: unpackStatus, ms: Date.now() - pushedAt });
   if (unpackStatus === 'unpack ok') {
     // The stored size is the catalog's; refresh it now that the bytes are in.
     storage.exactRepoSize(record.owner, record.name);
@@ -460,7 +462,7 @@ async function handle(req, res, { owner, name, hook, searchParams }) {
   // client needs for a fetch or a push.
   const gate = security.gitLimits.hit(security.clientAddress(req));
   if (!gate.ok) {
-    security.audit('git rate limit', `from=${security.clientAddress(req)} path=${req.url}`);
+    security.audit('git rate limit', { from: security.clientAddress(req), path: req.url });
     security.tooMany(res, gate.retryAfterMs);
     return;
   }

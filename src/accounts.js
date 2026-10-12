@@ -20,6 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const { openDatabase } = require('./sqlite');
 const { ACCOUNTS_DIR, MAX_OPEN_ACCOUNT_FILES } = require('./config');
+const log = require('./log');
 
 // Schema history. Every entry takes the database from version N to N+1 and
 // must only ever add: a new table, a new column with a default, a new index.
@@ -188,10 +189,12 @@ function rowToUser(row) {
   };
 }
 
+// The owner is attached on read rather than stored, so a repository row can
+// never disagree with the account file it lives in. There is no owner column to
+// read here; listRepos and getRepo add it from the handle they already opened.
 function rowToRepo(row) {
   if (!row) return null;
   return {
-    owner: row.owner,
     name: row.name,
     description: row.description,
     private: !!row.private,
@@ -201,15 +204,13 @@ function rowToRepo(row) {
   };
 }
 
-// The owner is attached on read rather than stored, so a repository row can
-// never disagree with the account file it lives in.
 function findUser(login) {
   if (typeof login !== 'string' || !login) return null;
   let handle;
   try {
     handle = connect(login);
   } catch (err) {
-    console.error(`SAREit cannot open account "${login}": ${err.message}`);
+    log.error('account unreadable', { login, reason: err.message });
     return null;
   }
   if (!handle) return null;
@@ -373,7 +374,7 @@ function listAllRepos() {
     try {
       repos = listRepos(login);
     } catch (err) {
-      console.error(`SAREit skipped repositories for "${login}": ${err.message}`);
+      log.error('repositories skipped', { login, reason: err.message });
       continue;
     }
     out.push(...repos);

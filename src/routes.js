@@ -1,26 +1,23 @@
 // Web routes. The git protocol lives in src/git/http.js; everything here
-// renders HTML except the raw blob endpoint.
+// renders HTML except the raw blob endpoint and the import job status.
 
 const fs = require('fs');
 const path = require('path');
-const { spawn } = require('child_process');
 const accounts = require('./accounts');
 const catalog = require('./catalog');
 const storage = require('./storage');
 const auth = require('./auth');
 const security = require('./security');
+const imports = require('./imports');
+const log = require('./log');
 const repo = require('./git/repo');
 const objects = require('./git/objects');
 const views = require('./views');
 const pages = require('./repoPages');
-const { PORT, MAX_REPO_BYTES } = require('./config');
+const { PORT } = require('./config');
 
 const COMMIT_PAGE_SIZE = 60;
 const MAX_HISTORY = 400;
-
-// An import runs git clone, which can take minutes on a large project. The
-// request is held open for that long and no longer.
-const IMPORT_TIMEOUT_MS = 10 * 60 * 1000;
 
 function html(res, status, markup) {
   const body = Buffer.from(markup, 'utf8');
@@ -40,6 +37,12 @@ function redirect(res, location) {
 function plain(res, status, text) {
   const body = Buffer.from(text, 'utf8');
   res.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8', 'Content-Length': body.length });
+  res.end(body);
+}
+
+function json(res, status, value) {
+  const body = Buffer.from(JSON.stringify(value), 'utf8');
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': body.length, 'Cache-Control': 'no-store' });
   res.end(body);
 }
 
@@ -129,6 +132,13 @@ async function handleWeb(req, res, segments, url) {
   if (head === 'register' && segments.length === 1) return authRoute(req, res, 'register');
   if (head === 'logout' && segments.length === 1) return logout(req, res);
   if (head === 'new' && segments.length === 1) return newRepoRoute(req, res, viewer);
+  // The import job's own page and status. A three segment path is claimed even
+  // when no job matches, which costs an account named "new" with a repository
+  // named "import" a ref that is exactly 32 hex characters; four segment paths
+  // with a section other than status fall through to the routing below.
+  if (head === 'new' && segments[1] === 'import' && (segments.length === 3 || segments[3] === 'status')) {
+    return importJobRoute(req, res, viewer, segments);
+  }
   if (head === 'healthz' && segments.length === 1) return healthRoute(res);
 
   const owner = segments[0];
@@ -209,7 +219,7 @@ function csrfField(req) {
 
 function requireCsrf(req, res) {
   if (security.csrfOk(auth.getSecret(), auth.sessionCookieValue(req), req.form.csrf)) return true;
-  security.audit('csrf rejected', `path=${req.url}`);
+  security.audit('csrf rejected', { path: req.url });
   plain(res, 403, 'Form rejected: bad token\n');
   return false;
 }
@@ -237,7 +247,7 @@ async function authRoute(req, res, mode) {
     // wants once its accounts exist. Registration is open by default so a
     // fresh install is usable without editing anything.
     if (process.env.SAREIT_SIGNUP_OPEN === '0') {
-      security.audit('sign up refused', 'registration is closed');
+      security.audit('sign up refused', { reason: 'registration is closed' });
       html(res, 403, views.authPage({ mode, error: 'Registration is closed on this server.', csrf: csrfField(req) }));
       return;
     }
@@ -264,11 +274,11 @@ async function authRoute(req, res, mode) {
     try {
       await auth.register({ login, email, password });
     } catch (err) {
-      console.error(`SAREit could not create account "${login}": ${err.message}`);
+      log.error('account create failed', { login, reason: err.message });
       html(res, 500, views.authPage({ mode, error: 'Could not write the account file. See the server log.', values: { login, email }, csrf: csrfField(req) }));
       return;
     }
-    security.audit('account created', `login=${login} from=${address}`);
+    security.audit('account created', { login, from: address });
   } else {
     // Both buckets are checked before any hash is computed, so a blocked
     // attempt costs nothing.
@@ -280,7 +290,7 @@ async function authRoute(req, res, mode) {
     }
     const ok = await auth.checkCredentials(login, password);
     if (!ok) {
-      security.audit('sign in failed', `login=${login || '(none)'} from=${address}`);
+      security.audit('sign in failed', { login: login || '(none)', from: address });
       html(res, 401, views.authPage({ mode, error: 'Wrong username or password.', values: { login }, csrf: csrfField(req) }));
       return;
     }
@@ -343,140 +353,94 @@ async function newRepoRoute(req, res, viewer) {
   }
 
   const source = String(req.form.import || '').trim();
-  if (source) return importRoute(req, res, viewer, { name, description, isPrivate, source });
+  if (source) {
+    const gate = security.importLimits.hit(viewer.login.toLowerCase());
+    if (!gate.ok) return security.tooMany(res, gate.retryAfterMs);
+
+    const remote = imports.validSource(source);
+    if (!remote) {
+      security.audit('import refused', { login: viewer.login, reason: 'bad source' });
+      html(res, 400, views.newRepoPage({
+        user: viewer,
+        error: 'That is not a usable git remote. Give an https, http, ssh or git URL.',
+        values: { name, description, private: isPrivate, import: source },
+        csrf: csrfField(req),
+      }));
+      return undefined;
+    }
+
+    const job = imports.start({ owner: viewer.login, name, description, isPrivate, source: remote, typed: source });
+    redirect(res, `/new/import/${job.id}`);
+    return undefined;
+  }
 
   try {
     const record = storage.createRepository(viewer.login, { name, description, isPrivate, headBranch: 'main' });
-    security.audit('repository created', `${record.owner}/${record.name} private=${isPrivate} by=${viewer.login}`);
+    security.audit('repository created', { repo: `${record.owner}/${record.name}`, private: isPrivate, by: viewer.login });
     redirect(res, `${base}/${encodeURIComponent(name)}?msg=Repository+created`);
   } catch (err) {
-    console.error(`SAREit could not create ${viewer.login}/${name}: ${err.message}`);
+    log.error('repository create failed', { repo: `${viewer.login}/${name}`, reason: err.message });
     html(res, 500, views.newRepoPage({ user: viewer, error: 'Could not create the repository. See the server log.', values, csrf: csrfField(req) }));
   }
   return undefined;
 }
 
-// The source string is handed to git as an argument, so it must not be able to
-// look like an option. A leading dash would otherwise turn the remote into a
-// flag such as --upload-pack and run a command on this machine. Validating
-// that it is a real remote URL also keeps file:// out.
-//
-// SAREIT_IMPORT_DIR, when set, is a staging directory the operator controls.
-// A signed-in account may clone from inside it and nowhere else on this
-// filesystem, which is what makes an offline migration possible without letting
-// anyone read the server's own files through the import form.
-function validImportSource(source) {
-  if (!source || source.length > 1024) return null;
-  if (source.startsWith('-')) return null;
-
-  const staging = process.env.SAREIT_IMPORT_DIR;
-  if (staging && !/^[a-z][a-z0-9+.-]*:\/\//i.test(source) && !/^[\w.-]+@[\w.-]+:/.test(source)) {
-    const root = path.resolve(staging);
-    const target = path.resolve(root, source);
-    const relative = path.relative(root, target);
-    if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) return target;
-    return null;
+// The page the import form redirects to, and the status it polls. A failed copy
+// is rendered as the new repository page again, with the values the job was
+// started from, so a URL that turned out to be wrong does not have to be typed
+// a second time.
+function importJobRoute(req, res, viewer, segments) {
+  if (req.method !== 'GET') {
+    res.writeHead(405, { Allow: 'GET', 'Content-Length': 0 });
+    res.end();
+    return undefined;
   }
 
-  if (/^[\w.-]+@[\w.-]+:[\w./~-]+$/.test(source)) return source;
-  try {
-    const url = new URL(source);
-    if (url.protocol !== 'https:' && url.protocol !== 'http:' && url.protocol !== 'ssh:' && url.protocol !== 'git:') {
-      return null;
-    }
-    if (!url.hostname) return null;
-    return url.toString();
-  } catch {
-    return null;
+  const job = viewer ? imports.find(segments[2], viewer.login) : null;
+  const page = `/new/import/${segments[2]}`;
+
+  if (!job) {
+    // The poll asks for a job that was there when the page was rendered and is
+    // gone now, either swept or lost to a restart. Answered as a job that
+    // ended rather than an error, because the poll has to be able to read it and
+    // follow the location back to the page that explains.
+    if (segments[3]) return json(res, 200, { state: 'forgotten', location: page });
+    html(res, 404, views.notFoundPage({ user: viewer, what: 'That import is not being tracked. A restart drops the ones still running.' }));
+    return undefined;
   }
-}
 
-// git clone --bare is what keeps an imported project intact: it copies the
-// objects and refs as they are, so commit messages, authors, dates, tags and
-// notes come across exactly as the origin platform recorded them. Nothing
-// afterwards rewrites them, so a normal clone of the result reproduces the
-// original history.
-async function importRoute(req, res, viewer, { name, description, isPrivate, source }) {
-  const gate = security.importLimits.hit(viewer.login.toLowerCase());
-  if (!gate.ok) return security.tooMany(res, gate.retryAfterMs);
+  // The status comes before the page, because the poll has to keep getting JSON
+  // once the copy has failed. Answering it with the failure page instead is what
+  // would leave the bar crawling and the browser retrying a parse it can never
+  // complete.
+  if (segments[3]) {
+    json(res, 200, {
+      state: job.state,
+      percent: job.percent,
+      reported: job.reported,
+      phase: job.phase,
+      detail: job.detail,
+      error: job.error,
+      location:
+        job.state === 'done'
+          ? `/${encodeURIComponent(job.owner)}/${encodeURIComponent(job.name)}?msg=Imported`
+          : page,
+    });
+    return undefined;
+  }
 
-  const remote = validImportSource(source);
-  if (!remote) {
-    security.audit('import refused', `login=${viewer.login} reason=bad source`);
-    html(res, 400, views.newRepoPage({
+  if (job.state === 'failed') {
+    html(res, 200, views.newRepoPage({
       user: viewer,
-      error: 'That is not a usable git remote. Give an https, http, ssh or git URL.',
-      values: { name, description, private: isPrivate, import: source },
+      error: `Import failed: ${job.error}`,
+      values: { name: job.name, description: job.description, private: job.isPrivate, import: job.typed },
       csrf: csrfField(req),
     }));
     return undefined;
   }
 
-  const dir = storage.repoDir(viewer.login, name);
-  fs.mkdirSync(path.dirname(dir), { recursive: true });
-
-  try {
-    // GIT_TERMINAL_PROMPT stops git blocking on a credential prompt it can
-    // never answer, which would otherwise hold a request open for the timeout.
-    const result = await runGit(['clone', '--bare', '--', remote, dir], {
-      cwd: path.dirname(dir),
-      env: { GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: 'echo', GIT_ASKPASS_REQUIRE: 'never' },
-    });
-    if (result.code !== 0) throw new Error(result.stderr.trim().split('\n').slice(-3).join(' ') || 'git clone failed');
-
-    const headRef = repo.headRef(dir);
-    const headSha = headRef ? repo.resolveRefName(dir, headRef) : null;
-    const sizeBytes = storage.repoSize(dir);
-    const over = storage.checkBudget(viewer.login, name, 0);
-    if (over) throw new Error(over);
-    if (sizeBytes > MAX_REPO_BYTES) {
-      throw new Error(`imported repository is ${Math.round(sizeBytes / 1048576)}MB, over the ${Math.round(MAX_REPO_BYTES / 1048576)}MB limit`);
-    }
-
-    const record = storage.createRepository(viewer.login, {
-      name,
-      description,
-      isPrivate,
-      headBranch: headRef ? headRef.slice('refs/heads/'.length) : 'main',
-      importedFrom: remote,
-    });
-    catalog.storeSize(record.owner, record.name, sizeBytes);
-    security.audit(
-      'repository imported',
-      `${record.owner}/${record.name} from=${remote} ${Math.round(sizeBytes / 1048576)}MB by=${viewer.login}`
-    );
-    redirect(res, `/${encodeURIComponent(record.owner)}/${encodeURIComponent(record.name)}?msg=Imported`);
-  } catch (err) {
-    fs.rmSync(dir, { recursive: true, force: true });
-    console.error(`SAREit import of ${remote} failed: ${err.message}`);
-    security.audit('import failed', `login=${viewer.login} from=${remote} reason=${err.message}`);
-    html(res, 400, views.newRepoPage({
-      user: viewer,
-      error: `Import failed: ${err.message}`,
-      values: { name, description, private: isPrivate, import: source },
-      csrf: csrfField(req),
-    }));
-  }
+  html(res, 200, views.importPage({ user: viewer, job, statusUrl: `${page}/status` }));
   return undefined;
-}
-
-function runGit(args, options) {
-  return new Promise((resolve) => {
-    const child = spawn('git', args, { ...options, stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (chunk) => (stdout += chunk));
-    child.stderr.on('data', (chunk) => (stderr += chunk));
-    const timer = setTimeout(() => child.kill(), IMPORT_TIMEOUT_MS);
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      resolve({ code, stdout, stderr });
-    });
-    child.on('error', (err) => {
-      clearTimeout(timer);
-      resolve({ code: 1, stdout, stderr: err.message });
-    });
-  });
 }
 
 // The reflog records who pushed each ref update, the commit object records
@@ -756,7 +720,7 @@ async function settingsRoute(req, res, record, dir, viewer, segments) {
   // token kept working while the user was told it had been revoked.
   if (segments[3] === 'tokens' && !segments[4] && req.method === 'POST') {
     const issued = await auth.issueToken(viewer.login, String(req.form.name || '').trim().slice(0, 60));
-    security.audit('token issued', `login=${viewer.login} name=${issued.name || '(unnamed)'} id=${issued.id}`);
+    security.audit('token issued', { login: viewer.login, name: issued.name || '(unnamed)', id: issued.id });
     redirect(res, `${base}/settings?token=${encodeURIComponent(issued.value)}`);
     return undefined;
   }
@@ -767,7 +731,7 @@ async function settingsRoute(req, res, record, dir, viewer, segments) {
       // A revoked token that is still sitting in the verification cache would
       // keep working for up to a minute, which is not what revoking means.
       auth.invalidateToken(viewer.login, id);
-      security.audit('token revoked', `login=${viewer.login} id=${id}`);
+      security.audit('token revoked', { login: viewer.login, id });
     }
     redirect(res, `${base}/settings?msg=Token+revoked`);
     return undefined;
@@ -775,7 +739,7 @@ async function settingsRoute(req, res, record, dir, viewer, segments) {
 
   if (segments[3] === 'delete' && req.method === 'POST') {
     storage.deleteRepository(record.owner, record.name);
-    security.audit('repository deleted', `${record.owner}/${record.name} by=${viewer.login}`);
+    security.audit('repository deleted', { repo: `${record.owner}/${record.name}`, by: viewer.login });
     redirect(res, '/?msg=Repository+deleted');
     return undefined;
   }

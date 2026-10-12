@@ -89,6 +89,24 @@ async function postWithCsrf(pagePath, jar, fields) {
   });
 }
 
+// An import is a job the server runs on its own, so the POST comes back at once
+// and the copy is still going. Follow it through the status endpoint the import
+// page polls, which is where the job reports how far it has got.
+async function awaitImport(res, jar) {
+  const page = res.headers.location;
+  for (let poll = 0; poll < 1200; poll++) {
+    const answer = await request('GET', `${page}/status`, { headers: { Cookie: jar } });
+    if (answer.status !== 200) throw new Error(`import status unavailable: ${answer.status}`);
+    const status = JSON.parse(answer.body.toString('utf8'));
+    if (status.state !== 'running') {
+      if (status.state !== 'done') throw new Error(`import ended as ${status.state}: ${status.error || status.phase}`);
+      return status;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error('import did not finish within the poll budget');
+}
+
 async function main() {
   const suffix = String(Date.now()).slice(-6);
   const login = `tester${suffix}`;
@@ -300,7 +318,16 @@ async function main() {
   run(['commit', '-q', '-m', 'Add a nested binary blob'], origin);
 
   res = await postWithCsrf('/new', jar.value, { name: 'imported', import: `origin${suffix}`, description: 'brought over' });
-  check('import repo', res.status === 302 && res.headers.location.includes('/imported'), res.status === 302 ? '' : res.body.toString('utf8').slice(0, 300));
+  check('import repo', res.status === 302 && res.headers.location.startsWith('/new/import/'), res.status === 302 ? res.headers.location : res.body.toString('utf8').slice(0, 300));
+  const importPage = res.status === 302 ? await request('GET', res.headers.location, { headers: { Cookie: jar.value } }) : null;
+  check(
+    'the import page offers a progress bar',
+    importPage && importPage.body.includes('import-bar') && importPage.body.includes('role="progressbar"'),
+    importPage ? importPage.body.includes('import-bar') ? 'bar present' : 'no bar in the markup' : 'no page'
+  );
+
+  const importStatus = res.status === 302 ? await awaitImport(res, jar.value) : null;
+  check('import finished', !!importStatus, importStatus ? `location ${importStatus.location}` : 'not started');
 
   const importedUrl = `${BASE}/${login}/imported.git`;
   const importedClone = path.join(SCRATCH, 'imported-clone');

@@ -96,5 +96,56 @@
         if (!window.confirm(this.getAttribute('data-confirm'))) event.preventDefault();
       });
     }
+
+    var importer = document.querySelector('[data-import-status]');
+    if (importer) followImport(importer);
   });
+
+  // The import page follows the copy the server is running. The number on the
+  // bar is git's own, read back out of the job, so there is nothing here to
+  // guess: a clone that reports no percentage leaves the bar crawling, and a
+  // copy that has finished or failed is a different page, which is what the
+  // browser navigates to.
+  function followImport(panel) {
+    var statusUrl = panel.getAttribute('data-import-status');
+    var fill = panel.querySelector('[data-import-bar]');
+    var phase = panel.querySelector('[data-import-phase]');
+    var unreachable = 0;
+
+    function paint(job) {
+      if (job.reported) {
+        fill.style.width = job.percent + '%';
+        fill.removeAttribute('data-moving');
+        fill.parentNode.setAttribute('aria-valuenow', job.percent);
+      }
+      phase.textContent = job.phase;
+      if (job.detail) phase.appendChild(document.createTextNode(' ' + job.detail));
+    }
+
+    function ask() {
+      window.fetch(statusUrl, { credentials: 'same-origin' })
+        .then(function (answer) {
+          return answer.ok ? answer.json() : null;
+        })
+        .then(function (job) {
+          unreachable = 0;
+          // A job that is gone, finished or failed all have somewhere else to
+          // be read. Assigning is what lands the browser there.
+          if (job && job.state !== 'running') {
+            window.location.assign(job.location);
+            return;
+          }
+          if (job) paint(job);
+        })
+        .catch(function () {
+          unreachable += 1;
+          if (unreachable >= 5) phase.textContent = 'Lost contact with the server, still retrying.';
+        })
+        .then(function () {
+          window.setTimeout(ask, 1000);
+        });
+    }
+
+    ask();
+  }
 })();

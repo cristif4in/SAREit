@@ -9,11 +9,12 @@
 const http = require('http');
 const https = require('https');
 const fs = require('fs');
-const { HOST, PORT } = require('./src/config');
+const { HOST, PORT, DATA_DIR } = require('./src/config');
 const { createApp, reportStartupState } = require('./src/app');
 const accounts = require('./src/accounts');
 const catalog = require('./src/catalog');
 const repo = require('./src/git/repo');
+const log = require('./src/log');
 
 // scrypt runs on this pool. It is the deliberate cost of a password check, and
 // at the default of 4 threads a handful of simultaneous sign ins would queue
@@ -40,15 +41,14 @@ server.keepAliveTimeout = 61000;
 server.timeout = 0;
 
 server.listen(PORT, HOST, () => {
-  const scheme = usingTls ? 'https' : 'http';
-  console.log(`SAREit listening on ${scheme}://${HOST}:${PORT}`);
+  log.info('listening', { url: `${usingTls ? 'https' : 'http'}://${HOST}:${PORT}`, data: DATA_DIR, tls: usingTls });
   if (!usingTls) {
-    console.log('SAREit is on plain HTTP; set SAREIT_TLS_CERT and SAREIT_TLS_KEY before using it on an untrusted network');
+    log.warn('plain http', { fix: 'set SAREIT_TLS_CERT and SAREIT_TLS_KEY before using this on an untrusted network' });
   }
 });
 
 server.on('error', (err) => {
-  console.error(`SAREit could not bind ${HOST}:${PORT}: ${err.message}`);
+  log.error('bind failed', { host: HOST, port: PORT, reason: err.message });
   process.exit(1);
 });
 

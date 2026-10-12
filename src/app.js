@@ -9,6 +9,7 @@ const accounts = require('./accounts');
 const storage = require('./storage');
 const auth = require('./auth');
 const security = require('./security');
+const log = require('./log');
 const catalog = require('./catalog');
 const repo = require('./git/repo');
 const { PUBLIC_DIR, MAX_FORM_BYTES, MAX_PUSH_BYTES, REPOS_DIR, ACCOUNTS_DIR, HOST } = require('./config');
@@ -83,32 +84,36 @@ function reportStartupState() {
       accounts.connect(login);
       healthy++;
     } catch (err) {
-      console.error(`SAREit account "${login}" did not open, its file is not being served: ${err.message}`);
+      log.error('account unreadable', { login, reason: err.message });
     }
   }
 
   // The catalog is a cache, so it is rebuilt whenever an account file has
   // changed. On a large instance the fingerprint matches and this is a no-op,
   // which keeps restart time flat as the account count grows.
-  let catalogNote = 'catalog not built';
+  let catalogState = 'skipped';
+  let repositories = 0;
   try {
     const result = catalog.rebuildIfStale();
-    catalogNote = result.rebuilt
-      ? `catalog rebuilt, ${result.count} repositories`
-      : 'catalog current';
+    catalogState = result.rebuilt ? 'rebuilt' : 'current';
+    repositories = result.count;
   } catch (err) {
-    catalogNote = `catalog could not be built: ${err.message}`;
-    console.error(`SAREit ${catalogNote}`);
+    catalogState = 'failed';
+    log.error('catalog rebuild failed', { reason: err.message });
   }
 
   const problems = [];
   for (const name of storage.missingRepoDirs()) problems.push(`repository row with no directory: ${name}`);
   for (const dir of storage.listOrphanedDirs()) problems.push(`directory with no repository row: ${dir}`);
 
-  console.log(
-    `SAREit storage: ${healthy}/${logins.length} account file(s) readable, ${catalogNote}, ${problems.length} repository mismatch(es)`
-  );
-  for (const problem of problems) console.error(`SAREit ${problem}`);
+  log.info('storage', {
+    accounts: logins.length,
+    readable: healthy,
+    catalog: catalogState,
+    repositories,
+    mismatches: problems.length,
+  });
+  for (const problem of problems) log.error('storage mismatch', { detail: problem });
 }
 
 function parseForm(req) {
@@ -152,12 +157,12 @@ function createApp() {
     // Checked before anything is read, so a forged request is refused without
     // this process doing work on its behalf.
     if (!security.hostAllowed(req, HOST)) {
-      security.audit('host refused', `host=${req.headers.host} path=${req.url}`);
+      security.audit('host refused', { host: req.headers.host, path: req.url });
       sendText(res, 421, 'Unknown host\n');
       return;
     }
     if (!security.sameOrigin(req)) {
-      security.audit('cross origin refused', `origin=${req.headers.origin} path=${req.url}`);
+      security.audit('cross origin refused', { origin: req.headers.origin, path: req.url });
       sendText(res, 403, 'Cross origin request refused\n');
       return;
     }
@@ -203,14 +208,14 @@ function createApp() {
       req.form = req.method === 'POST' ? await parseForm(req) : Object.create(null);
 
       if (isStateChange(req, segments) && !auth.userFromCookie(req)) {
-        security.audit('unauthenticated state change refused', `path=${req.url}`);
+        security.audit('unauthenticated state change refused', { path: req.url });
         sendText(res, 401, 'Sign in to make changes\n');
         return;
       }
 
       await handleWeb(req, res, segments, url);
     } catch (err) {
-      console.error(`SAREit ${req.method} ${req.url} failed: ${err.stack || err.message}`);
+      log.error('request failed', { method: req.method, url: req.url, reason: err.stack || err.message });
       if (!res.headersSent) sendText(res, 500, 'Internal server error\n');
       else res.end();
     }

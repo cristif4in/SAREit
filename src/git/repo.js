@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 const crypto = require('crypto');
+const log = require('../log');
 const {
   TYPE_CODES,
   readLoose,
@@ -170,7 +171,7 @@ function packIndexCache(dir) {
     try {
       index = readIdx(fs.readFileSync(path.join(dir, 'objects', 'pack', name)));
     } catch (err) {
-      console.error(`SAREit skipping unreadable pack index ${stem}: ${err.message}`);
+      log.error('pack index unreadable', { pack: stem, reason: err.message });
       continue;
     }
     indexes.push({ stem, index, packPath: path.join(dir, 'objects', 'pack', `${stem}.pack`) });
@@ -236,7 +237,7 @@ function readObject(dir, sha, depth = 0) {
     try {
       return readObjectFromPack({ ...entry, offset }, dir, depth + 1);
     } catch (err) {
-      console.error(`SAREit could not read ${sha} from pack ${entry.stem}: ${err.message}`);
+      log.error('pack object read failed', { pack: entry.stem, sha, reason: err.message });
       return null;
     }
   }
@@ -442,7 +443,7 @@ function logRefUpdate(dir, ref, oldSha, newSha, who, message) {
   } catch (err) {
     // The ref itself is already written. A missing reflog costs the "pushed
     // by" line on a page, which is not worth failing a push over.
-    console.error(`SAREit could not append to the reflog for ${ref}: ${err.message}`);
+    log.error('reflog append failed', { ref, reason: err.message });
   }
 }
 

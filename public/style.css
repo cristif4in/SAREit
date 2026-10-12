@@ -84,6 +84,8 @@ html {
 .theme-animated .gauge,
 .theme-animated .search input,
 .theme-animated .gauge-fill,
+.theme-animated .import-bar,
+.theme-animated .import-fill,
 .theme-animated .btn,
 .theme-animated .pill,
 .theme-animated .flash {
@@ -1008,6 +1010,46 @@ tr.gap td {
 .gauge-fill {
   height: 100%;
   background: var(--success);
+}
+
+/* Taller than a storage gauge because this is the one that moves while someone
+   waits on it. Until git names a phase the fill crawls: it is translated across
+   the track rather than resized, so with prefers-reduced-motion the animation
+   is off and it sits at a third, which still reads as a copy in progress. */
+.import-bar {
+  height: 10px;
+  border-radius: 5px;
+  background: var(--border-soft);
+  overflow: hidden;
+  margin: 10px 0 6px;
+}
+
+.import-fill {
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width 300ms ease;
+}
+
+.import-fill[data-moving] {
+  width: 30%;
+  animation: import-crawl 1.4s ease-in-out infinite alternate;
+}
+
+/* 233% is the track: the fill is 30% wide, so moving it by three and a bit
+   times its own width takes it from the left edge to past the right one. */
+@keyframes import-crawl {
+  from {
+    margin-left: 0;
+  }
+
+  to {
+    margin-left: 233%;
+  }
+}
+
+.import-line {
+  margin: 0 0 12px;
 }
 
 .token-value {

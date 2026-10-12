@@ -62,6 +62,23 @@ async function postWithCsrf(pagePath, jar, fields) {
   });
 }
 
+// The import runs as a job the server owns, so the POST returns while the clone
+// is still going. This waits for it, which the pack reading below needs.
+async function awaitImport(res, jar) {
+  const page = res.headers.location;
+  for (let poll = 0; poll < 1200; poll++) {
+    const answer = await request('GET', `${page}/status`, { headers: { Cookie: jar } });
+    if (answer.status !== 200) throw new Error(`import status unavailable: ${answer.status}`);
+    const status = JSON.parse(answer.body.toString('utf8'));
+    if (status.state !== 'running') {
+      if (status.state !== 'done') throw new Error(`import ended as ${status.state}: ${status.error || status.phase}`);
+      return status;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error('import did not finish within the poll budget');
+}
+
 async function main() {
   const login = 'pack' + String(Date.now()).slice(-6);
   const password = 'correct horse battery';
@@ -112,6 +129,7 @@ async function main() {
 
   res = await postWithCsrf('/new', jar, { name: 'packed', import: `packed${login}` });
   check('import the packed repository', res.status === 302, `status ${res.status}`);
+  await awaitImport(res, jar);
 
   const url = `${BASE}/${login}/packed.git`;
   const cloneDir = path.join(SCRATCH, 'clone');

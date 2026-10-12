@@ -1,20 +1,14 @@
-// Abuse limits, CSRF tokens, response headers, and the audit trail.
-//
-// The rate limiter counts failures rather than requests for sign in, so a
-// burst of legitimate traffic from one client is not punished while a script
-// guessing passwords is. It keeps a window per key and drops the map when it
-// grows past the cap, so a flood from rotating addresses cannot pin memory.
+// Security file
 
 const crypto = require('crypto');
 const { MAX_FORM_BYTES } = require('./config');
+const log = require('./log');
 
-const AUDIT = 'SAREit audit';
-
-function audit(event, detail = '') {
-  console.error(`${AUDIT} ${event}${detail ? ` ${detail}` : ''}`);
+function audit(event, fields) {
+  log.audit(event, fields);
 }
 
-// A Map keyed by bucket. Each entry is {hits: number[], blockedUntil: number}.
+
 function makeLimiter({ windowMs, max }) {
   const buckets = new Map();
   const windowMsValue = windowMs;
@@ -48,7 +42,7 @@ function makeLimiter({ windowMs, max }) {
         entry.blockedUntil = now + windowMsValue;
         buckets.delete(key);
         buckets.set(key, entry);
-        audit('rate limit tripped', `key=${key} window=${windowMsValue}ms max=${max}`);
+        audit('rate limit tripped', { key, windowMs: windowMsValue, max });
         return { ok: false, retryAfterMs: windowMsValue };
       }
       buckets.delete(key);
