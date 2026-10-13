@@ -288,12 +288,8 @@ ${preview}`;
   });
 }
 
-// The MIT board that sits above a recognised license file.
-//
-// It is deliberately not a GitHub-style summary card: the icon is a custom
-// scales SVG, the permissions and limits are plain rows rather than tables of
-// check and cross marks, and the whole thing is bordered like the rest of
-// SAREit's panels instead of being a rounded grey box.
+// The license board (MIT only for now)
+
 function renderLicenseBoard() {
   const svg = `<svg class="license-icon" viewBox="0 0 24 24" width="28" height="28" aria-hidden="true" focusable="false">
   <path d="M12 2.6 3.4 6.2v5.1c0 5 3.6 8.6 8.6 10.1 5-1.5 8.6-5.1 8.6-10.1V6.2L12 2.6Z"
