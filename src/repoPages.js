@@ -246,11 +246,19 @@ function blobPage({ repo: record, viewer, ref, pathSegments, blob, mode, branche
   const binary = objects.isBinary(blob);
   const lineCount = blob.toString('utf8').split('\n').length;
 
+  // MIT detection. The filename is the first signal, but a LICENSE file that
+  // says MIT inside it is what actually makes it one, so both are checked.
+  const isLicenseName = /^(LICENSE|LICENCE|COPYING|UNLICENSE)(\.(md|txt))?$/i.test(fileName);
+  const licenseText = !binary ? blob.toString('utf8') : '';
+  const isMit = isLicenseName && /\bMIT\b/i.test(licenseText) && /permission is hereby granted/i.test(licenseText);
+
+  const licenseBoard = isMit ? renderLicenseBoard() : '';
+
   const preview = binary
     ? `<p class="pad muted">Binary file, ${esc(formatBytes(blob.length))}.</p>`
     : tooBig
       ? `<p class="pad muted">File is ${esc(formatBytes(blob.length))}, past the ${esc(formatBytes(RAW_PREVIEW_BYTES))} preview limit. Use the Raw link.</p>`
-      : `<table class="code-table"><tbody>${codeRows(blob)}</tbody></table>`;
+      : `${licenseBoard}<table class="code-table"><tbody>${codeRows(blob)}</tbody></table>`;
 
   const main = `<div class="pathbar"><div>${crumbs(base, ref, pathSegments, 'blob')}</div></div>
 <div class="blobbar">
@@ -278,6 +286,62 @@ ${preview}`;
       main,
     }),
   });
+}
+
+// The MIT board that sits above a recognised license file.
+//
+// It is deliberately not a GitHub-style summary card: the icon is a custom
+// scales SVG, the permissions and limits are plain rows rather than tables of
+// check and cross marks, and the whole thing is bordered like the rest of
+// SAREit's panels instead of being a rounded grey box.
+function renderLicenseBoard() {
+  const svg = `<svg class="license-icon" viewBox="0 0 24 24" width="28" height="28" aria-hidden="true" focusable="false">
+  <path d="M12 2.6 3.4 6.2v5.1c0 5 3.6 8.6 8.6 10.1 5-1.5 8.6-5.1 8.6-10.1V6.2L12 2.6Z"
+        fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+  <path d="M12 7.6v8.8M8.1 16.4h7.8" fill="none" stroke="currentColor"
+        stroke-width="1.5" stroke-linecap="round"/>
+  <path d="M8.1 9.2 6 13.4h4.2L8.1 9.2ZM15.9 9.2l-2.1 4.2H18l-2.1-4.2Z"
+        fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+</svg>`;
+
+  const permission = (label) => `<li class="license-perm">${esc(label)}</li>`;
+  const limit = (label) => `<li class="license-limit">${esc(label)}</li>`;
+
+  return `<section class="license-board" aria-label="MIT License summary">
+  <div class="license-board-head">
+    ${svg}
+    <div class="license-board-title">
+      <h2>MIT License</h2>
+      <p>This repository is released under the MIT license. You can use, change and share it, including commercially, as long as the copyright notice and this permission notice travel with it.</p>
+    </div>
+    <span class="license-badge">MIT</span>
+  </div>
+  <div class="license-board-body">
+    <div class="license-col">
+      <h3>You can</h3>
+      <ul>
+        ${permission('Use it commercially')}
+        ${permission('Change it')}
+        ${permission('Share it')}
+        ${permission('Use it privately')}
+      </ul>
+    </div>
+    <div class="license-col">
+      <h3>You cannot</h3>
+      <ul>
+        ${limit('Hold the author liable')}
+        ${limit('Expect a warranty')}
+      </ul>
+    </div>
+    <div class="license-col">
+      <h3>You must</h3>
+      <ul>
+        ${permission('Keep the license and copyright notice')}
+      </ul>
+    </div>
+  </div>
+  <p class="license-board-foot">This is a plain-language summary, not legal advice. The text below is the license itself.</p>
+</section>`;
 }
 
 function codeRows(blob) {
